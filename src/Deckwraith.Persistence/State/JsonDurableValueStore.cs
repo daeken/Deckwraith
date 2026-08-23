@@ -1,4 +1,4 @@
-using System.Collections.Concurrent;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using Deckwraith.Application.Abstractions;
@@ -12,13 +12,16 @@ namespace Deckwraith.Persistence.State;
 public sealed class JsonDurableValueStore : IDurableValueStore
 {
     private readonly string _rootPath;
-    private readonly ConcurrentDictionary<string, SemaphoreSlim> _gates =
-        new(StringComparer.Ordinal);
+    private readonly string _lockPath;
 
     public JsonDurableValueStore(string rootPath)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(rootPath);
         _rootPath = Path.GetFullPath(rootPath);
+        _lockPath = Path.Combine(
+            Path.GetTempPath(),
+            "deckwraith-cas",
+            Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(_rootPath))));
     }
 
     public async Task<DurableValueRecord?> ReadAsync(
@@ -81,33 +84,25 @@ public sealed class JsonDurableValueStore : IDurableValueStore
         ValidateName(name);
         ValidateJson(value);
         var path = ValuePath(wraith, scope, name, runId, haunt);
-        var gate = _gates.GetOrAdd(path, static _ => new SemaphoreSlim(1, 1));
-        await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
-        try
-        {
-            var current = File.Exists(path)
-                ? await AtomicJsonFile.ReadAsync<DurableValueRecord>(
-                    path, cancellationToken).ConfigureAwait(false)
-                : null;
-            EnsureExpectedVersion(name, expectedVersion, current?.Version ?? 0);
-            var record = new DurableValueRecord(
-                DurableValueRecord.CurrentSchemaVersion,
-                scope,
-                name,
-                value.Clone(),
-                CanonicalJson.Hash(value),
-                wraith.Value,
-                runId,
-                haunt?.Value,
-                checked((current?.Version ?? 0) + 1),
-                now);
-            await AtomicJsonFile.WriteAsync(path, record, cancellationToken).ConfigureAwait(false);
-            return record;
-        }
-        finally
-        {
-            gate.Release();
-        }
+        await using var lease = await AcquireLockAsync(path, cancellationToken).ConfigureAwait(false);
+        var current = File.Exists(path)
+            ? await AtomicJsonFile.ReadAsync<DurableValueRecord>(
+                path, cancellationToken).ConfigureAwait(false)
+            : null;
+        EnsureExpectedVersion(name, expectedVersion, current?.Version ?? 0);
+        var record = new DurableValueRecord(
+            DurableValueRecord.CurrentSchemaVersion,
+            scope,
+            name,
+            value.Clone(),
+            CanonicalJson.Hash(value),
+            wraith.Value,
+            runId,
+            haunt?.Value,
+            checked((current?.Version ?? 0) + 1),
+            now);
+        await AtomicJsonFile.WriteAsync(path, record, cancellationToken).ConfigureAwait(false);
+        return record;
     }
 
     public async Task<DurableValueRecord?> RemoveAsync(
@@ -121,26 +116,50 @@ public sealed class JsonDurableValueStore : IDurableValueStore
     {
         ValidateName(name);
         var path = ValuePath(wraith, scope, name, runId, haunt);
-        var gate = _gates.GetOrAdd(path, static _ => new SemaphoreSlim(1, 1));
-        await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
-        try
+        await using var lease = await AcquireLockAsync(path, cancellationToken).ConfigureAwait(false);
+        var current = File.Exists(path)
+            ? await AtomicJsonFile.ReadAsync<DurableValueRecord>(
+                path, cancellationToken).ConfigureAwait(false)
+            : null;
+        EnsureExpectedVersion(name, expectedVersion, current?.Version ?? 0);
+        if (current is null)
         {
-            var current = File.Exists(path)
-                ? await AtomicJsonFile.ReadAsync<DurableValueRecord>(
-                    path, cancellationToken).ConfigureAwait(false)
-                : null;
-            EnsureExpectedVersion(name, expectedVersion, current?.Version ?? 0);
-            if (current is null)
-            {
-                return null;
-            }
-
-            File.Delete(path);
-            return current with { Value = current.Value.Clone() };
+            return null;
         }
-        finally
+
+        File.Delete(path);
+        return current with { Value = current.Value.Clone() };
+    }
+
+    private async Task<FileStream> AcquireLockAsync(
+        string valuePath,
+        CancellationToken cancellationToken)
+    {
+        Directory.CreateDirectory(_lockPath);
+        SensitiveFilePermissions.RestrictDirectory(_lockPath);
+        var lockName = Convert.ToHexString(
+            SHA256.HashData(Encoding.UTF8.GetBytes(Path.GetFullPath(valuePath))));
+        var path = Path.Combine(_lockPath, lockName + ".lock");
+
+        while (true)
         {
-            gate.Release();
+            cancellationToken.ThrowIfCancellationRequested();
+            try
+            {
+                var stream = new FileStream(
+                    path,
+                    FileMode.OpenOrCreate,
+                    FileAccess.ReadWrite,
+                    FileShare.None,
+                    bufferSize: 1,
+                    FileOptions.Asynchronous | FileOptions.WriteThrough);
+                SensitiveFilePermissions.RestrictFile(path);
+                return stream;
+            }
+            catch (IOException)
+            {
+                await Task.Delay(10, cancellationToken).ConfigureAwait(false);
+            }
         }
     }
 

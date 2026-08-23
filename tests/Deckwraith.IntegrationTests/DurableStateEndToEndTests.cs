@@ -17,6 +17,7 @@ public sealed class DurableStateEndToEndTests
     private const string RunId = "00000000000000000000000000000001";
     private static readonly string[] AlphaLabels = ["alpha"];
     private static readonly string[] AlphaBetaLabels = ["alpha", "beta"];
+    private static readonly string[] ContendedWinners = ["first", "second"];
 
     [Fact]
     public async Task ScopedValuesSurviveColdClientsAndEnforceCompareAndSwap()
@@ -141,6 +142,86 @@ public sealed class DurableStateEndToEndTests
         Assert.Single(records, record => record.Kind == "state.value-removed");
         Assert.Equal(string.Empty, await RunGitAsync(
             temporaryDirectory.Path, ["status", "--porcelain"]));
+    }
+
+    [Fact]
+    public async Task CompareAndSwapSerializesIndependentStoreInstances()
+    {
+        using var temporaryDirectory = new TemporaryDirectory();
+        var deckState = new JsonDeckStateStore(temporaryDirectory.Path);
+        using (var state = new StateSpine(
+            deckState,
+            new JsonlAgentArchive(temporaryDirectory.Path),
+            new ContentAddressedArtifactStore(temporaryDirectory.Path),
+            new GitCheckpointStore(temporaryDirectory.Path),
+            new FixedClock()))
+        {
+            await state.InitializeAsync(CancellationToken.None);
+            await state.CreateWraithAsync("wraith1", CancellationToken.None);
+        }
+
+        var wraith = CanonicalName.Parse("wraith1");
+        var firstStore = new JsonDurableValueStore(temporaryDirectory.Path);
+        var secondStore = new JsonDurableValueStore(temporaryDirectory.Path);
+        await firstStore.WriteAsync(
+            wraith,
+            DurableValueScope.Agent,
+            "contended",
+            CanonicalJson.ToElement("initial"),
+            runId: null,
+            haunt: null,
+            expectedVersion: 0,
+            DateTimeOffset.UnixEpoch,
+            CancellationToken.None);
+
+        using var ready = new CountdownEvent(2);
+        var release = new TaskCompletionSource<bool>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var successes = 0;
+        var conflicts = 0;
+
+        async Task CompeteAsync(JsonDurableValueStore store, string value)
+        {
+            ready.Signal();
+            await release.Task;
+            try
+            {
+                await store.WriteAsync(
+                    wraith,
+                    DurableValueScope.Agent,
+                    "contended",
+                    CanonicalJson.ToElement(value),
+                    runId: null,
+                    haunt: null,
+                    expectedVersion: 1,
+                    DateTimeOffset.UnixEpoch.AddSeconds(1),
+                    CancellationToken.None);
+                Interlocked.Increment(ref successes);
+            }
+            catch (DeckStateException exception) when (
+                exception.Message.Contains("version conflict", StringComparison.Ordinal))
+            {
+                Interlocked.Increment(ref conflicts);
+            }
+        }
+
+        var first = Task.Run(() => CompeteAsync(firstStore, "first"));
+        var second = Task.Run(() => CompeteAsync(secondStore, "second"));
+        Assert.True(ready.Wait(TimeSpan.FromSeconds(5)));
+        release.SetResult(true);
+        await Task.WhenAll(first, second);
+
+        Assert.Equal(1, successes);
+        Assert.Equal(1, conflicts);
+        var final = await firstStore.ReadAsync(
+            wraith,
+            DurableValueScope.Agent,
+            "contended",
+            runId: null,
+            haunt: null,
+            CancellationToken.None);
+        Assert.Equal(2, final?.Version);
+        Assert.Contains(final?.Value.GetString(), ContendedWinners);
     }
 
     private static async Task<string> RunGitAsync(string workingDirectory, string[] arguments)
