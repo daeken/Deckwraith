@@ -1,0 +1,5 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <ProjectReference Include="../Deckwraith.Core/Deckwraith.Core.csproj" />
+  </ItemGroup>
+</Project>
