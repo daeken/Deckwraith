@@ -120,6 +120,44 @@ public interface IInferenceStateStore
         CancellationToken cancellationToken);
 }
 
+public interface IDurableValueStore
+{
+    Task<DurableValueRecord?> ReadAsync(
+        CanonicalName wraith,
+        DurableValueScope scope,
+        string name,
+        string? runId,
+        CanonicalName? haunt,
+        CancellationToken cancellationToken);
+
+    Task<IReadOnlyList<DurableValueRecord>> ListAsync(
+        CanonicalName wraith,
+        DurableValueScope scope,
+        string? runId,
+        CanonicalName? haunt,
+        CancellationToken cancellationToken);
+
+    Task<DurableValueRecord> WriteAsync(
+        CanonicalName wraith,
+        DurableValueScope scope,
+        string name,
+        JsonElement value,
+        string? runId,
+        CanonicalName? haunt,
+        long? expectedVersion,
+        DateTimeOffset now,
+        CancellationToken cancellationToken);
+
+    Task<DurableValueRecord?> RemoveAsync(
+        CanonicalName wraith,
+        DurableValueScope scope,
+        string name,
+        string? runId,
+        CanonicalName? haunt,
+        long? expectedVersion,
+        CancellationToken cancellationToken);
+}
+
 public interface IDeckClock
 {
     DateTimeOffset UtcNow { get; }
