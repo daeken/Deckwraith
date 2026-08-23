@@ -1,7 +1,18 @@
 ﻿using System.Text.Json;
+using Deckwraith.Application.Inference;
 using Deckwraith.Persistence;
+using Deckwraith.Persistence.Archives;
+using Deckwraith.Persistence.Git;
+using Deckwraith.Persistence.State;
+using Deckwraith.Providers.OpenAI;
 
-return await DeckwraithCli.RunAsync(args).ConfigureAwait(false);
+using var shutdown = new CancellationTokenSource();
+Console.CancelKeyPress += (_, eventArgs) =>
+{
+    eventArgs.Cancel = true;
+    shutdown.Cancel();
+};
+return await DeckwraithCli.RunAsync(args, shutdown.Token).ConfigureAwait(false);
 
 internal static class DeckwraithCli
 {
@@ -10,7 +21,9 @@ internal static class DeckwraithCli
         WriteIndented = true,
     };
 
-    public static async Task<int> RunAsync(string[] arguments)
+    public static async Task<int> RunAsync(
+        string[] arguments,
+        CancellationToken cancellationToken = default)
     {
         if (arguments.Length < 2)
         {
@@ -28,30 +41,40 @@ internal static class DeckwraithCli
                 "init" when arguments.Length == 2 => new
                 {
                     rootPath = Path.GetFullPath(rootPath),
-                    commitId = await state.InitializeAsync().ConfigureAwait(false),
+                    commitId = await state.InitializeAsync(cancellationToken).ConfigureAwait(false),
                 },
                 "create-wraith" when arguments.Length == 3 =>
-                    await state.CreateWraithAsync(arguments[2]).ConfigureAwait(false),
+                    await state.CreateWraithAsync(arguments[2], cancellationToken).ConfigureAwait(false),
                 "create-haunt" when arguments.Length == 3 =>
-                    await state.CreateHauntAsync(arguments[2]).ConfigureAwait(false),
+                    await state.CreateHauntAsync(arguments[2], cancellationToken).ConfigureAwait(false),
                 "rename-wraith" when arguments.Length == 4 =>
-                    await state.RenameWraithAsync(arguments[2], arguments[3]).ConfigureAwait(false),
+                    await state.RenameWraithAsync(
+                        arguments[2], arguments[3], cancellationToken).ConfigureAwait(false),
                 "rename-haunt" when arguments.Length == 4 =>
-                    await state.RenameHauntAsync(arguments[2], arguments[3]).ConfigureAwait(false),
+                    await state.RenameHauntAsync(
+                        arguments[2], arguments[3], cancellationToken).ConfigureAwait(false),
                 "resolve-wraith" when arguments.Length == 3 => new
                 {
-                    name = (await state.ResolveWraithAsync(arguments[2]).ConfigureAwait(false)).Value,
+                    name = (await state.ResolveWraithAsync(
+                        arguments[2], cancellationToken).ConfigureAwait(false)).Value,
                 },
                 "resolve-haunt" when arguments.Length == 3 => new
                 {
-                    name = (await state.ResolveHauntAsync(arguments[2]).ConfigureAwait(false)).Value,
+                    name = (await state.ResolveHauntAsync(
+                        arguments[2], cancellationToken).ConfigureAwait(false)).Value,
                 },
                 "identity" when arguments.Length == 3 =>
-                    await state.ReadIdentityAsync(arguments[2]).ConfigureAwait(false),
+                    await state.ReadIdentityAsync(arguments[2], cancellationToken).ConfigureAwait(false),
                 "archive" when arguments.Length == 3 =>
-                    await state.ReadArchiveAsync(arguments[2]).ConfigureAwait(false),
+                    await state.ReadArchiveAsync(arguments[2], cancellationToken).ConfigureAwait(false),
                 "store-artifact" when arguments.Length is 5 or 6 =>
-                    await StoreArtifactAsync(state, arguments).ConfigureAwait(false),
+                    await StoreArtifactAsync(state, arguments, cancellationToken).ConfigureAwait(false),
+                "start-run" when arguments.Length == 6 =>
+                    await StartRunAsync(rootPath, arguments, cancellationToken).ConfigureAwait(false),
+                "turn" when arguments.Length == 5 =>
+                    await ExecuteTurnAsync(rootPath, arguments, cancellationToken).ConfigureAwait(false),
+                "run-openai" when arguments.Length == 7 =>
+                    await RunOpenAiAsync(rootPath, arguments, cancellationToken).ConfigureAwait(false),
                 _ => throw new ArgumentException($"Unknown command or invalid arguments: '{command}'."),
             };
 
@@ -67,7 +90,8 @@ internal static class DeckwraithCli
 
     private static async Task<object> StoreArtifactAsync(
         Deckwraith.Application.State.StateSpine state,
-        string[] arguments)
+        string[] arguments,
+        CancellationToken cancellationToken)
     {
         await using var stream = new FileStream(
             arguments[4],
@@ -80,13 +104,88 @@ internal static class DeckwraithCli
             arguments[2],
             arguments[3],
             stream,
-            arguments.Length == 6 ? arguments[5] : null).ConfigureAwait(false);
+            arguments.Length == 6 ? arguments[5] : null,
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    private static async Task<object> StartRunAsync(
+        string rootPath,
+        string[] arguments,
+        CancellationToken cancellationToken)
+    {
+        using var runtime = CreateInferenceRuntime(rootPath);
+        return await runtime.StartRunAsync(
+            arguments[2],
+            ParseOptionalHaunt(arguments[3]),
+            arguments[5],
+            "openai-codex-subscription",
+            arguments[4],
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    private static async Task<object> ExecuteTurnAsync(
+        string rootPath,
+        string[] arguments,
+        CancellationToken cancellationToken)
+    {
+        using var runtime = CreateInferenceRuntime(rootPath);
+        return await runtime.ExecuteTurnAsync(
+            arguments[2], arguments[3], arguments[4], cancellationToken).ConfigureAwait(false);
+    }
+
+    private static async Task<object> RunOpenAiAsync(
+        string rootPath,
+        string[] arguments,
+        CancellationToken cancellationToken)
+    {
+        using var runtime = CreateInferenceRuntime(rootPath);
+        var started = await runtime.StartRunAsync(
+            arguments[2],
+            ParseOptionalHaunt(arguments[3]),
+            arguments[5],
+            "openai-codex-subscription",
+            arguments[4],
+            cancellationToken).ConfigureAwait(false);
+        var turn = await runtime.ExecuteTurnAsync(
+            arguments[2], started.Run.RunId, arguments[6], cancellationToken).ConfigureAwait(false);
+        return new { started, turn };
+    }
+
+    private static InferenceRuntime CreateInferenceRuntime(string rootPath)
+    {
+        var provider = new CodexAppServerProvider(new CodexAppServerProviderOptions(
+            ResolveCodexExecutable(),
+            Path.GetTempPath()));
+        return new InferenceRuntime(
+            new JsonDeckStateStore(rootPath),
+            new JsonInferenceStateStore(rootPath),
+            new JsonlAgentArchive(rootPath),
+            new GitCheckpointStore(rootPath),
+            new ModelProviderRegistry([provider]));
+    }
+
+    private static string? ParseOptionalHaunt(string value) => value == "-" ? null : value;
+
+    private static string ResolveCodexExecutable()
+    {
+        var configured = Environment.GetEnvironmentVariable("DECKWRAITH_CODEX_PATH");
+        if (!string.IsNullOrWhiteSpace(configured))
+        {
+            return configured;
+        }
+
+        const string desktopPath = "/Applications/ChatGPT.app/Contents/Resources/codex";
+        return File.Exists(desktopPath) ? desktopPath : "codex";
     }
 
     private static void WriteUsage()
     {
         Console.Error.WriteLine(
             "Usage: deckwraith <init|create-wraith|create-haunt|rename-wraith|rename-haunt|" +
-            "resolve-wraith|resolve-haunt|identity|archive|store-artifact> <deck-path> [arguments]");
+            "resolve-wraith|resolve-haunt|identity|archive|store-artifact|start-run|turn|run-openai> " +
+            "<deck-path> [arguments]\n" +
+            "  start-run <deck> <wraith> <haunt|-> <model> <objective>\n" +
+            "  turn <deck> <wraith> <run-id> <message>\n" +
+            "  run-openai <deck> <wraith> <haunt|-> <model> <objective> <message>");
     }
 }

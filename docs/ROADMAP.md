@@ -15,7 +15,7 @@ Own the durable namespace and history before adding inference.
 
 Acceptance: an end-to-end test initializes a deck, creates `wraith1` and `deckwraith`, writes an artifact and event, renames both, resolves the old aliases, validates the unchanged archive, and verifies a clean Git worktree and checkpoint history.
 
-## 2. Inference spine
+## 2. Inference spine — implemented
 
 Make one wraith complete a streamed fake-provider run without coupling durable state to a vendor SDK.
 
@@ -26,6 +26,11 @@ Make one wraith complete a streamed fake-provider run without coupling durable s
 - Elide complete tool call/result pairs after the configured turn window while retaining raw archive events.
 
 Acceptance: a fake-provider run survives shell replacement, reconstructs exact current context from the archive, and produces byte-stable manifests and pairwise tool elision.
+
+The first concrete adapter is a replaceable ChatGPT-subscription bridge over the supported
+Codex app-server protocol. It explicitly selects Codex's built-in `openai` provider, disables
+provider-owned tool use at the Deckwraith boundary, and has a live subscription smoke test in
+addition to deterministic notification and prompt-projection contract tests.
 
 ## 3. PowerShell runtime
 

@@ -11,5 +11,6 @@
     <Project Path="tests/Deckwraith.Core.Tests/Deckwraith.Core.Tests.csproj" />
     <Project Path="tests/Deckwraith.IntegrationTests/Deckwraith.IntegrationTests.csproj" />
     <Project Path="tests/Deckwraith.Persistence.Tests/Deckwraith.Persistence.Tests.csproj" />
+    <Project Path="tests/Deckwraith.Providers.ContractTests/Deckwraith.Providers.ContractTests.csproj" />
   </Folder>
 </Solution>

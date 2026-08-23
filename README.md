@@ -2,7 +2,8 @@
 
 Deckwraith is a local-first runtime for durable autonomous agent identities. Models are replaceable shells; identity, current context, archives, tools, and executable deckbooks belong to the wraith.
 
-The repository currently implements milestone 1, the **state spine**. It provides:
+The repository currently implements milestones 1 and 2: the **state spine** and
+the **inference spine**. It provides:
 
 - Git-backed deck-state initialization with restrictive local permissions and no automatic remote.
 - Portable, case-insensitive canonical names and reserved aliases.
@@ -10,6 +11,10 @@ The repository currently implements milestone 1, the **state spine**. It provide
 - Hash-checked, append-only, segmented per-wraith JSONL archives.
 - Content-addressed haunt artifacts.
 - Coherent Git checkpoints for every public mutation.
+- Provider-neutral streaming requests and events, persistent runs and disposable shells.
+- A Git-backed materialized `context.json`, deterministic context manifests, and pairwise tool elision.
+- A fake-provider end-to-end lifecycle and a replaceable ChatGPT-subscription bridge through
+  the supported Codex app-server protocol.
 - A small headless command surface and end-to-end tests.
 
 See [SPEC.md](SPEC.md) for the full architecture and [docs/ROADMAP.md](docs/ROADMAP.md) for the delivery plan and package boundaries.
@@ -17,8 +22,8 @@ See [SPEC.md](SPEC.md) for the full architecture and [docs/ROADMAP.md](docs/ROAD
 ## Build and test
 
 ```text
-dotnet build
-dotnet test
+dotnet build Deckwraith.slnx
+dotnet test Deckwraith.slnx
 ```
 
 ## State-spine CLI
@@ -32,5 +37,22 @@ dotnet run --project src/Deckwraith.Headless -- create-wraith /path/to/deck-stat
 dotnet run --project src/Deckwraith.Headless -- rename-wraith /path/to/deck-state wraith1 vesper
 dotnet run --project src/Deckwraith.Headless -- resolve-wraith /path/to/deck-state wraith1
 ```
+
+## Subscription-backed inference
+
+Sign in to Codex with ChatGPT as described in the
+[official OpenAI authentication documentation](https://developers.openai.com/codex/auth),
+then start and continue a durable run:
+
+```text
+dotnet run --project src/Deckwraith.Headless -- start-run /path/to/deck-state wraith1 deckwraith gpt-5.6-terra "Implement the next change"
+dotnet run --project src/Deckwraith.Headless -- turn /path/to/deck-state wraith1 RUN_ID "Begin."
+```
+
+For a one-shot smoke test, `run-openai` combines those operations. Deckwraith launches
+[`codex app-server`](https://developers.openai.com/codex/app-server) with Codex's reserved
+built-in `openai` provider, injects the complete durable identity and current context, and
+keeps tool execution outside the adapter. Set `DECKWRAITH_CODEX_PATH` when `codex` is not on
+`PATH` and the ChatGPT desktop-bundled executable is unavailable.
 
 Treat every deck-state repository as credential-equivalent data. Deckwraith does not add or push Git remotes.

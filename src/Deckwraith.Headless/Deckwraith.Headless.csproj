@@ -6,5 +6,6 @@
   <ItemGroup>
     <ProjectReference Include="../Deckwraith.Application/Deckwraith.Application.csproj" />
     <ProjectReference Include="../Deckwraith.Persistence/Deckwraith.Persistence.csproj" />
+    <ProjectReference Include="../Deckwraith.Providers.OpenAI/Deckwraith.Providers.OpenAI.csproj" />
   </ItemGroup>
 </Project>

@@ -2,4 +2,7 @@
   <ItemGroup>
     <ProjectReference Include="../Deckwraith.Providers.Abstractions/Deckwraith.Providers.Abstractions.csproj" />
   </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="Deckwraith.Providers.ContractTests" />
+  </ItemGroup>
 </Project>
