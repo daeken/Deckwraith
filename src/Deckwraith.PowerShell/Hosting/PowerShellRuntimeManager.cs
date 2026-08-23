@@ -45,7 +45,32 @@ public sealed class PowerShellRuntimeManager : IDisposable
         ArgumentNullException.ThrowIfNull(script);
         var wraith = CanonicalName.Parse(invocation.Wraith);
         var normalized = invocation with { Wraith = wraith.Value };
-        var session = _sessions.GetOrAdd(
+        var session = GetOrCreateSession(wraith);
+        return session.ExecuteAsync(normalized, script, cancellationToken);
+    }
+
+    public PowerShellRuntimeInfo EnsureRuntime(string wraith) =>
+        GetOrCreateSession(CanonicalName.Parse(wraith)).Info;
+
+    public async Task<PowerShellRuntimeInfo> ReplaceAsync(
+        PowerShellInvocationContext invocation,
+        string reason,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(reason);
+        var wraith = CanonicalName.Parse(invocation.Wraith);
+        var normalized = invocation with { Wraith = wraith.Value };
+        var session = GetOrCreateSession(wraith);
+        return await session.ReplaceAsync(normalized, reason, cancellationToken).ConfigureAwait(false);
+    }
+
+    public PowerShellRuntimeInfo? TryGetInfo(string wraith) =>
+        _sessions.TryGetValue(CanonicalName.Parse(wraith).Value, out var session)
+            ? session.Info
+            : null;
+
+    private WraithPowerShellSession GetOrCreateSession(CanonicalName wraith) =>
+        _sessions.GetOrAdd(
             wraith.Value,
             _ => new WraithPowerShellSession(
                 _rootPath,
@@ -54,24 +79,6 @@ public sealed class PowerShellRuntimeManager : IDisposable
                 _archive,
                 _checkpoints,
                 _clock));
-        return session.ExecuteAsync(normalized, script, cancellationToken);
-    }
-
-    public async Task<PowerShellRuntimeInfo> ReplaceAsync(
-        PowerShellInvocationContext invocation,
-        string reason,
-        CancellationToken cancellationToken = default)
-    {
-        ArgumentException.ThrowIfNullOrWhiteSpace(reason);
-        _ = await ExecuteAsync(invocation, string.Empty, cancellationToken).ConfigureAwait(false);
-        var session = _sessions[CanonicalName.Parse(invocation.Wraith).Value];
-        return await session.ReplaceAsync(invocation, reason, cancellationToken).ConfigureAwait(false);
-    }
-
-    public PowerShellRuntimeInfo? TryGetInfo(string wraith) =>
-        _sessions.TryGetValue(CanonicalName.Parse(wraith).Value, out var session)
-            ? session.Info
-            : null;
 
     public void Dispose()
     {

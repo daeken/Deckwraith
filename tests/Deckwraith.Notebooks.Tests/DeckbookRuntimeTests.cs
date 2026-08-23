@@ -3,6 +3,7 @@ using System.Runtime.CompilerServices;
 using System.Text.Json;
 using Deckwraith.Application.Abstractions;
 using Deckwraith.Application.State;
+using Deckwraith.Core.Naming;
 using Deckwraith.Core.Serialization;
 using Deckwraith.Core.State;
 using Deckwraith.Kernels.Abstractions;
@@ -246,6 +247,60 @@ public sealed class DeckbookRuntimeTests
             environment.Path, ["status", "--porcelain"]));
     }
 
+    [Fact]
+    public async Task KernelThrowsAndCancellationStillProduceTerminalExecutionRecords()
+    {
+        using var environment = await TestEnvironment.CreateAsync();
+        await environment.Runtime.InsertAsync(
+            "wraith1",
+            "deckwraith",
+            new InsertDeckbookCell(
+                "throws",
+                DeckbookCellKind.Code,
+                "THROW",
+                "powershell"));
+        await environment.Runtime.InsertAsync(
+            "wraith1",
+            "deckwraith",
+            new InsertDeckbookCell(
+                "cancel",
+                DeckbookCellKind.Code,
+                "CANCEL",
+                "powershell"));
+
+        var unknown = await environment.Runtime.RunCellAsync(
+            "wraith1", "deckwraith", "throws");
+        Assert.Equal(CellKernelExecutionStatus.OutcomeUnknown, unknown.Output.Status);
+        Assert.Contains(
+            unknown.Output.Errors,
+            error => error.Contains("kernel.threw", StringComparison.Ordinal));
+
+        using var cancellation = new CancellationTokenSource();
+        var pending = environment.Runtime.RunCellAsync(
+            "wraith1",
+            "deckwraith",
+            "cancel",
+            cancellationToken: cancellation.Token);
+        await environment.Kernel.CancellationEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        cancellation.Cancel();
+        var cancelled = await pending.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(CellKernelExecutionStatus.Cancelled, cancelled.Output.Status);
+
+        var records = await new JsonlAgentArchive(environment.Path).ReadAllAsync(
+            CanonicalName.Parse("wraith1"), CancellationToken.None);
+        var started = records.Where(record =>
+            record.Kind == "deckbook.cell-execution-started").ToArray();
+        var terminalIds = records.Where(record =>
+                record.Kind == "deckbook.cell-execution-completed")
+            .Select(record => record.Payload.GetProperty("operationId").GetString())
+            .ToHashSet(StringComparer.Ordinal);
+        Assert.Equal(2, started.Length);
+        Assert.All(started, record =>
+            Assert.Contains(record.Payload.GetProperty("operationId").GetString(), terminalIds));
+        Assert.Equal(string.Empty, await RunGitAsync(
+            environment.Path, ["status", "--porcelain"]));
+    }
+
     private static DeckbookCellView Cell(DeckbookSnapshot snapshot, string name) =>
         Assert.Single(snapshot.Cells, cell => cell.Cell.Name == name);
 
@@ -279,6 +334,9 @@ public sealed class DeckbookRuntimeTests
 
         public int InvocationCount { get; private set; }
 
+        public TaskCompletionSource<bool> CancellationEntered { get; } = new(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+
         public async IAsyncEnumerable<CellKernelEvent> ExecuteAsync(
             CellExecutionRequest request,
             [EnumeratorCancellation] CancellationToken cancellationToken)
@@ -287,6 +345,18 @@ public sealed class DeckbookRuntimeTests
             await Task.Yield();
             cancellationToken.ThrowIfCancellationRequested();
             yield return new CellKernelStarted("fake-1.0", 1);
+            if (request.Source.Contains("THROW", StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException("requested kernel exception");
+            }
+
+            if (request.Source.Contains("CANCEL", StringComparison.Ordinal))
+            {
+                CancellationEntered.TrySetResult(true);
+                await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+                yield break;
+            }
+
             if (request.Source.Contains("FAIL", StringComparison.Ordinal))
             {
                 yield return new CellKernelErrorProduced("fake.failure", "requested failure");

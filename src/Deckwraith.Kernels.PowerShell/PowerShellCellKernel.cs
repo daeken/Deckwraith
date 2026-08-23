@@ -31,8 +31,13 @@ public sealed class PowerShellCellKernel : ICellKernel, IDisposable
         CellExecutionRequest request,
         [EnumeratorCancellation] CancellationToken cancellationToken)
     {
+        var runtime = _runspaces.EnsureRuntime(request.Wraith);
         using var linkedCancellation = CancellationTokenSource.CreateLinkedTokenSource(
             cancellationToken);
+        yield return new CellKernelStarted(
+            typeof(PSObject).Assembly.GetName().Version?.ToString() ?? "unknown",
+            runtime.Epoch);
+
         if (!_executions.TryAdd(request.ExecutionId, linkedCancellation))
         {
             throw new DeckStateException(
@@ -48,8 +53,13 @@ public sealed class PowerShellCellKernel : ICellKernel, IDisposable
                 new PowerShellInvocationContext(request.Wraith, request.RunId, request.Haunt),
                 BuildScript(request),
                 linkedCancellation.Token).ConfigureAwait(false);
+            cancelled = linkedCancellation.IsCancellationRequested;
         }
         catch (OperationCanceledException)
+        {
+            cancelled = true;
+        }
+        catch (Exception) when (linkedCancellation.IsCancellationRequested)
         {
             cancelled = true;
         }
@@ -76,9 +86,6 @@ public sealed class PowerShellCellKernel : ICellKernel, IDisposable
             yield break;
         }
 
-        yield return new CellKernelStarted(
-            typeof(PSObject).Assembly.GetName().Version?.ToString() ?? "unknown",
-            result.ExecutionEpoch);
         var translationFailed = false;
         foreach (var value in result.Output)
         {

@@ -384,7 +384,7 @@ public sealed class DeckbookRuntime : IDisposable
             var execution = await ExecuteCellAsync(
                 address, state, name, runId, NormalizeInput(input), cancellationToken)
                 .ConfigureAwait(false);
-            await CheckpointAsync(address, "deckbook-cell-executed", cancellationToken)
+            await CheckpointAsync(address, "deckbook-cell-executed", CancellationToken.None)
                 .ConfigureAwait(false);
             return execution.Result;
         }
@@ -440,8 +440,9 @@ public sealed class DeckbookRuntime : IDisposable
                     result.Output.Status,
                     result.Output.Hash,
                 }).ToArray(),
-            }, cancellationToken).ConfigureAwait(false);
-            await CheckpointAsync(address, "deckbook-run-remaining-completed", cancellationToken)
+            }, CancellationToken.None).ConfigureAwait(false);
+            await CheckpointAsync(
+                address, "deckbook-run-remaining-completed", CancellationToken.None)
                 .ConfigureAwait(false);
             return new DeckbookRunRemainingResult(executions, stoppedAt is null, stoppedAt);
         }
@@ -605,6 +606,25 @@ public sealed class DeckbookRuntime : IDisposable
         var source = await _store.ReadSourceAsync(
             address.Wraith, address.Haunt, cell, cancellationToken).ConfigureAwait(false);
         var executionId = Guid.CreateVersion7(_clock.UtcNow).ToString("N");
+        var kernel = _kernels.GetKernel(cell.Kernel);
+        var request = new CellExecutionRequest(
+            executionId,
+            address.Wraith.Value,
+            runId,
+            address.Haunt.Value,
+            cell.Name,
+            source,
+            input);
+        await using var kernelEvents = kernel.ExecuteAsync(request, cancellationToken)
+            .GetAsyncEnumerator(cancellationToken);
+        if (!await kernelEvents.MoveNextAsync().ConfigureAwait(false) ||
+            kernelEvents.Current is not CellKernelStarted started)
+        {
+            throw new DeckStateException(
+                $"Cell kernel '{kernel.KernelId}' did not announce its execution environment " +
+                "before executing the cell.");
+        }
+
         var startedAt = _clock.UtcNow;
         await AppendAsync(address, "deckbook.cell-execution-started", new
         {
@@ -615,53 +635,69 @@ public sealed class DeckbookRuntime : IDisposable
             sourceHash = CanonicalJson.Hash(source),
             input,
             inputHash = CanonicalJson.Hash(input),
-            kernel = cell.Kernel,
+            kernel = kernel.KernelId,
+            kernelVersion = started.KernelVersion,
+            kernelEpoch = started.KernelEpoch,
+            ambientState = kernel.Capabilities.AmbientState,
         }, cancellationToken, runId, executionId).ConfigureAwait(false);
 
-        var kernel = _kernels.GetKernel(cell.Kernel);
         var values = new List<JsonElement>();
         var standardOutput = new List<string>();
         var standardError = new List<string>();
         var errors = new List<string>();
-        var kernelVersion = "unknown";
-        long kernelEpoch = 0;
+        var kernelVersion = started.KernelVersion;
+        var kernelEpoch = started.KernelEpoch;
         CellKernelExecutionStatus? status = null;
-        await foreach (var kernelEvent in kernel.ExecuteAsync(
-            new CellExecutionRequest(
-                executionId,
-                address.Wraith.Value,
-                runId,
-                address.Haunt.Value,
-                cell.Name,
-                source,
-                input),
-            cancellationToken).WithCancellation(cancellationToken).ConfigureAwait(false))
+        try
         {
-            switch (kernelEvent)
+            while (await kernelEvents.MoveNextAsync().ConfigureAwait(false))
             {
-                case CellKernelStarted started:
-                    kernelVersion = started.KernelVersion;
-                    kernelEpoch = started.KernelEpoch;
-                    break;
-                case CellKernelValueProduced value:
-                    values.Add(value.Value.Clone());
-                    break;
-                case CellKernelTextProduced { Stream: "stdout" } text:
-                    standardOutput.Add(text.Text);
-                    break;
-                case CellKernelTextProduced text:
-                    standardError.Add(text.Text);
-                    break;
-                case CellKernelErrorProduced error:
-                    errors.Add($"{error.ErrorId}: {error.Message}");
-                    break;
-                case CellKernelCompleted completed:
-                    status = completed.Status;
-                    break;
+                if (status is not null)
+                {
+                    throw new DeckStateException(
+                        $"Cell kernel '{kernel.KernelId}' emitted an event after its terminal event.");
+                }
+
+                var kernelEvent = kernelEvents.Current;
+                switch (kernelEvent)
+                {
+                    case CellKernelStarted:
+                        throw new DeckStateException(
+                            $"Cell kernel '{kernel.KernelId}' emitted more than one started event.");
+                    case CellKernelValueProduced value:
+                        values.Add(value.Value.Clone());
+                        break;
+                    case CellKernelTextProduced { Stream: "stdout" } text:
+                        standardOutput.Add(text.Text);
+                        break;
+                    case CellKernelTextProduced text:
+                        standardError.Add(text.Text);
+                        break;
+                    case CellKernelErrorProduced error:
+                        errors.Add($"{error.ErrorId}: {error.Message}");
+                        break;
+                    case CellKernelCompleted completed:
+                        status = completed.Status;
+                        break;
+                }
             }
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            status = CellKernelExecutionStatus.Cancelled;
+            errors.Add("kernel.cancelled: Cell execution was cancelled.");
+        }
+        catch (Exception exception)
+        {
+            status = CellKernelExecutionStatus.OutcomeUnknown;
+            errors.Add($"kernel.threw: {exception.GetType().Name}: {exception.Message}");
+        }
 
-        status ??= CellKernelExecutionStatus.OutcomeUnknown;
+        if (status is null)
+        {
+            status = CellKernelExecutionStatus.OutcomeUnknown;
+            errors.Add("kernel.missing-terminal: Cell kernel ended without a terminal event.");
+        }
         var completedAt = _clock.UtcNow;
         var unsignedOutput = new
         {
@@ -685,7 +721,7 @@ public sealed class DeckbookRuntime : IDisposable
             errors,
             completedAt);
         await _store.WriteOutputAsync(
-            address.Wraith, address.Haunt, output, cancellationToken).ConfigureAwait(false);
+            address.Wraith, address.Haunt, output, CancellationToken.None).ConfigureAwait(false);
         var provenance = new CellExecutionProvenance(
             executionId,
             CanonicalJson.Hash(source),
@@ -709,7 +745,7 @@ public sealed class DeckbookRuntime : IDisposable
 
         state.Deckbook = Advance(state.Deckbook, state.Cells);
         await PersistCellsAsync(
-            address, state.Deckbook, state.Cells, cancellationToken).ConfigureAwait(false);
+            address, state.Deckbook, state.Cells, CancellationToken.None).ConfigureAwait(false);
         await AppendAsync(address, "deckbook.cell-execution-completed", new
         {
             operationId = executionId,
@@ -719,7 +755,7 @@ public sealed class DeckbookRuntime : IDisposable
             kernel = kernel.KernelId,
             kernelVersion,
             kernelEpoch,
-        }, cancellationToken, runId).ConfigureAwait(false);
+        }, CancellationToken.None, runId).ConfigureAwait(false);
         return new ExecutionUpdate(
             state,
             new DeckbookExecutionResult(

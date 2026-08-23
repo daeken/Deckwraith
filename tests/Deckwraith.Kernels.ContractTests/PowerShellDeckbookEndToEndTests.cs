@@ -151,8 +151,94 @@ public sealed class PowerShellDeckbookEndToEndTests
             temporaryDirectory.Path, ["status", "--porcelain"]));
     }
 
+    [Fact]
+    public async Task PowerShellKernelInterruptStopsAnActiveExecutionAsCancelled()
+    {
+        using var temporaryDirectory = new TemporaryDirectory();
+        var deckState = new JsonDeckStateStore(temporaryDirectory.Path);
+        var archive = new JsonlAgentArchive(temporaryDirectory.Path);
+        var checkpoints = new GitCheckpointStore(temporaryDirectory.Path);
+        var clock = new FixedClock();
+        using (var state = new StateSpine(
+            deckState,
+            archive,
+            new ContentAddressedArtifactStore(temporaryDirectory.Path),
+            checkpoints,
+            clock))
+        {
+            await state.InitializeAsync(CancellationToken.None);
+            await state.CreateHauntAsync("deckwraith", CancellationToken.None);
+            await state.CreateWraithAsync("wraith1", CancellationToken.None);
+        }
+
+        var durableState = new DurableStateRuntime(
+            deckState,
+            new JsonDurableValueStore(temporaryDirectory.Path),
+            archive,
+            checkpoints,
+            clock);
+        using var runspaces = new PowerShellRuntimeManager(
+            temporaryDirectory.Path,
+            durableState,
+            archive,
+            checkpoints,
+            clock);
+        using var kernel = new PowerShellCellKernel(runspaces);
+        var markerPath = Path.Combine(
+            Path.GetTempPath(), $"deckwraith-interrupt-{Guid.NewGuid():N}.txt");
+        var executionId = Guid.CreateVersion7().ToString("N");
+        try
+        {
+            var pending = Task.Run(async () =>
+            {
+                var events = new List<CellKernelEvent>();
+                await foreach (var kernelEvent in kernel.ExecuteAsync(
+                    new CellExecutionRequest(
+                        executionId,
+                        "wraith1",
+                        RunId: null,
+                        "deckwraith",
+                        "interrupt-me",
+                        $"Set-Content -LiteralPath {Quote(markerPath)} -Value 'started'; " +
+                        "while ($true) { Start-Sleep -Milliseconds 25 }",
+                        CanonicalJson.ToElement<object?>(null)),
+                    CancellationToken.None))
+                {
+                    events.Add(kernelEvent);
+                }
+
+                return events;
+            });
+
+            await WaitForFileAsync(markerPath, TimeSpan.FromSeconds(5));
+            await kernel.InterruptAsync(executionId, CancellationToken.None);
+            var events = await pending.WaitAsync(TimeSpan.FromSeconds(5));
+
+            var started = Assert.IsType<CellKernelStarted>(events[0]);
+            Assert.True(started.KernelEpoch > 0);
+            var completed = Assert.IsType<CellKernelCompleted>(events[^1]);
+            Assert.Equal(CellKernelExecutionStatus.Cancelled, completed.Status);
+        }
+        finally
+        {
+            if (File.Exists(markerPath))
+            {
+                File.Delete(markerPath);
+            }
+        }
+    }
+
     private static string Quote(string value) =>
         "'" + value.Replace("'", "''", StringComparison.Ordinal) + "'";
+
+    private static async Task WaitForFileAsync(string path, TimeSpan timeout)
+    {
+        using var cancellation = new CancellationTokenSource(timeout);
+        while (!File.Exists(path))
+        {
+            await Task.Delay(20, cancellation.Token);
+        }
+    }
 
     private static async Task<string> RunGitAsync(string workingDirectory, string[] arguments)
     {
