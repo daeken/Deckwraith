@@ -22,6 +22,7 @@ public sealed record PowerShellExecutionResult(
     IReadOnlyList<PSObject> Output,
     IReadOnlyList<ErrorRecord> Errors,
     PowerShellRuntimeInfo Runtime,
+    long ExecutionEpoch,
     bool ToolsReloaded);
 
 public sealed record PowerShellToolReloadRequest(string Wraith);

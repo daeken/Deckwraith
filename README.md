@@ -2,8 +2,8 @@
 
 Deckwraith is a local-first runtime for durable autonomous agent identities. Models are replaceable shells; identity, current context, archives, tools, and executable deckbooks belong to the wraith.
 
-The repository currently implements milestones 1 through 3: the **state spine**,
-the **inference spine**, and the **PowerShell runtime**. It provides:
+The repository currently implements the first four milestones: the **state spine**,
+the **inference spine**, the **PowerShell runtime**, and **linear deckbooks**. It provides:
 
 - Git-backed deck-state initialization with restrictive local permissions and no automatic remote.
 - Portable, case-insensitive canonical names and reserved aliases.
@@ -18,6 +18,12 @@ the **inference spine**, and the **PowerShell runtime**. It provides:
 - Dedicated full-language hosted PowerShell runspaces with object-native compiled commands.
 - Explicit run-, wraith-, and haunt-scoped non-volatile values with content hashes and CAS.
 - Cold runspace replacement without replay and atomic reload of wraith-authored `.ps1` tools.
+- Git-readable named deckbook cells with sparse total ordering and stable rename aliases.
+- Exact linear-suffix staleness for insert, edit, move, delete, and rerun operations.
+- Immutable hash-addressed cell outputs, kernel/version/epoch provenance, and explicit
+  run-cell/run-remaining execution through a language-neutral kernel contract.
+- Bounded model-context projections containing pins, the active-cell window, current outputs,
+  and a compact index rather than the entire deckbook.
 - A small headless command surface and end-to-end tests.
 
 See [SPEC.md](SPEC.md) for the full architecture and [docs/ROADMAP.md](docs/ROADMAP.md) for the delivery plan and package boundaries.
@@ -70,5 +76,20 @@ Hosted sessions expose `Get-DwState`, `Set-DwState`, `Remove-DwState`, `Get-DwRu
 `Get-DwTool`, and `Reload-DwTools`. Library hosts retain one runspace per awake wraith;
 the one-shot CLI intentionally disposes its runspace when the process exits. Ordinary variables
 are volatile. Values written through the state commands survive cold replacement and process loss.
+
+## Linear deckbooks
+
+Create Git-readable cells and explicitly execute one cell or a remaining suffix:
+
+```text
+dotnet run --project src/Deckwraith.Headless -- add-cell /path/to/deck-state wraith1 deckwraith load code powershell "$global:n = 40; $n"
+dotnet run --project src/Deckwraith.Headless -- add-cell /path/to/deck-state wraith1 deckwraith answer code powershell "$global:n += 2; [pscustomobject]@{ answer = $n }"
+dotnet run --project src/Deckwraith.Headless -- run-remaining /path/to/deck-state wraith1 deckwraith load
+dotnet run --project src/Deckwraith.Headless -- deckbook-context /path/to/deck-state wraith1 deckwraith answer
+```
+
+`Deckwraith.Notebooks` also exposes insert, edit, move, rename, pin, delete, run-cell,
+run-remaining, and bounded-context APIs. Milestone 4 supplies the PowerShell cell kernel;
+the C# kernel remains milestone 5.
 
 Treat every deck-state repository as credential-equivalent data. Deckwraith does not add or push Git remotes.

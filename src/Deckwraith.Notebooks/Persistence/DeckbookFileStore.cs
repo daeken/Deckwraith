@@ -49,6 +49,9 @@ internal sealed class DeckbookFileStore
         return deckbook;
     }
 
+    public bool Exists(CanonicalName wraith, CanonicalName haunt) =>
+        File.Exists(ManifestPath(wraith, haunt));
+
     public Task<DeckbookDocument> ReadDeckbookAsync(
         CanonicalName wraith,
         CanonicalName haunt,

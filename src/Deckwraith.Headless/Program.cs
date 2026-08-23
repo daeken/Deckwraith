@@ -1,6 +1,10 @@
 ﻿using System.Text.Json;
 using Deckwraith.Application.Inference;
 using Deckwraith.Application.State;
+using Deckwraith.Kernels.Abstractions;
+using Deckwraith.Kernels.PowerShell;
+using Deckwraith.Notebooks;
+using Deckwraith.Notebooks.Model;
 using Deckwraith.Persistence;
 using Deckwraith.Persistence.Archives;
 using Deckwraith.Persistence.Git;
@@ -80,6 +84,17 @@ internal static class DeckwraithCli
                     await RunOpenAiAsync(rootPath, arguments, cancellationToken).ConfigureAwait(false),
                 "powershell" when arguments.Length == 6 =>
                     await RunPowerShellAsync(rootPath, arguments, cancellationToken).ConfigureAwait(false),
+                "deckbook" when arguments.Length == 4 =>
+                    await ReadDeckbookAsync(rootPath, arguments, cancellationToken).ConfigureAwait(false),
+                "add-cell" when arguments.Length == 8 =>
+                    await AddCellAsync(rootPath, arguments, cancellationToken).ConfigureAwait(false),
+                "run-cell" when arguments.Length is 5 or 6 =>
+                    await RunCellAsync(rootPath, arguments, cancellationToken).ConfigureAwait(false),
+                "run-remaining" when arguments.Length is 5 or 6 =>
+                    await RunRemainingAsync(rootPath, arguments, cancellationToken).ConfigureAwait(false),
+                "deckbook-context" when arguments.Length == 5 =>
+                    await CompileDeckbookContextAsync(rootPath, arguments, cancellationToken)
+                        .ConfigureAwait(false),
                 _ => throw new ArgumentException($"Unknown command or invalid arguments: '{command}'."),
             };
 
@@ -205,6 +220,75 @@ internal static class DeckwraithCli
         };
     }
 
+    private static async Task<object> ReadDeckbookAsync(
+        string rootPath,
+        string[] arguments,
+        CancellationToken cancellationToken)
+    {
+        using var composition = new NotebookComposition(rootPath);
+        return await composition.Notebooks.GetAsync(
+            arguments[2], arguments[3], cancellationToken).ConfigureAwait(false);
+    }
+
+    private static async Task<object> AddCellAsync(
+        string rootPath,
+        string[] arguments,
+        CancellationToken cancellationToken)
+    {
+        using var composition = new NotebookComposition(rootPath);
+        var kind = Enum.Parse<DeckbookCellKind>(arguments[5], ignoreCase: true);
+        return await composition.Notebooks.InsertAsync(
+            arguments[2],
+            arguments[3],
+            new InsertDeckbookCell(
+                arguments[4],
+                kind,
+                arguments[7],
+                arguments[6] == "-" ? null : arguments[6]),
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    private static async Task<object> RunCellAsync(
+        string rootPath,
+        string[] arguments,
+        CancellationToken cancellationToken)
+    {
+        using var composition = new NotebookComposition(rootPath);
+        return await composition.Notebooks.RunCellAsync(
+            arguments[2],
+            arguments[3],
+            arguments[4],
+            arguments.Length == 6 && arguments[5] != "-" ? arguments[5] : null,
+            cancellationToken: cancellationToken).ConfigureAwait(false);
+    }
+
+    private static async Task<object> RunRemainingAsync(
+        string rootPath,
+        string[] arguments,
+        CancellationToken cancellationToken)
+    {
+        using var composition = new NotebookComposition(rootPath);
+        return await composition.Notebooks.RunRemainingAsync(
+            arguments[2],
+            arguments[3],
+            arguments[4],
+            arguments.Length == 6 && arguments[5] != "-" ? arguments[5] : null,
+            cancellationToken: cancellationToken).ConfigureAwait(false);
+    }
+
+    private static async Task<object> CompileDeckbookContextAsync(
+        string rootPath,
+        string[] arguments,
+        CancellationToken cancellationToken)
+    {
+        using var composition = new NotebookComposition(rootPath);
+        return await composition.Notebooks.CompileContextAsync(
+            arguments[2],
+            arguments[3],
+            arguments[4] == "-" ? null : arguments[4],
+            cancellationToken: cancellationToken).ConfigureAwait(false);
+    }
+
     private static string? ParseOptionalHaunt(string value) => value == "-" ? null : value;
 
     private static string ResolveCodexExecutable()
@@ -224,11 +308,52 @@ internal static class DeckwraithCli
         Console.Error.WriteLine(
             "Usage: deckwraith <init|create-wraith|create-haunt|rename-wraith|rename-haunt|" +
             "resolve-wraith|resolve-haunt|identity|archive|store-artifact|start-run|turn|run-openai|" +
-            "powershell> " +
+            "powershell|deckbook|add-cell|run-cell|run-remaining|deckbook-context> " +
             "<deck-path> [arguments]\n" +
             "  start-run <deck> <wraith> <haunt|-> <model> <objective>\n" +
             "  turn <deck> <wraith> <run-id> <message>\n" +
             "  run-openai <deck> <wraith> <haunt|-> <model> <objective> <message>\n" +
-            "  powershell <deck> <wraith> <run|-> <haunt|-> <script>");
+            "  powershell <deck> <wraith> <run|-> <haunt|-> <script>\n" +
+            "  deckbook <deck> <wraith> <haunt>\n" +
+            "  add-cell <deck> <wraith> <haunt> <name> <kind> <kernel|-> <source>\n" +
+            "  run-cell <deck> <wraith> <haunt> <name> [run|-]\n" +
+            "  run-remaining <deck> <wraith> <haunt> <from> [run|-]\n" +
+            "  deckbook-context <deck> <wraith> <haunt> <active|->");
+    }
+
+    private sealed class NotebookComposition : IDisposable
+    {
+        private readonly PowerShellRuntimeManager _runspaces;
+        private readonly PowerShellCellKernel _kernel;
+
+        public NotebookComposition(string rootPath)
+        {
+            var deckState = new JsonDeckStateStore(rootPath);
+            var archive = new JsonlAgentArchive(rootPath);
+            var checkpoints = new GitCheckpointStore(rootPath);
+            var durableState = new DurableStateRuntime(
+                deckState,
+                new JsonDurableValueStore(rootPath),
+                archive,
+                checkpoints);
+            _runspaces = new PowerShellRuntimeManager(
+                rootPath, durableState, archive, checkpoints);
+            _kernel = new PowerShellCellKernel(_runspaces);
+            Notebooks = new DeckbookRuntime(
+                rootPath,
+                deckState,
+                new CellKernelRegistry([_kernel]),
+                archive,
+                checkpoints);
+        }
+
+        public DeckbookRuntime Notebooks { get; }
+
+        public void Dispose()
+        {
+            Notebooks.Dispose();
+            _kernel.Dispose();
+            _runspaces.Dispose();
+        }
     }
 }

@@ -8,6 +8,8 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="../Deckwraith.Application/Deckwraith.Application.csproj" />
+    <ProjectReference Include="../Deckwraith.Kernels.PowerShell/Deckwraith.Kernels.PowerShell.csproj" />
+    <ProjectReference Include="../Deckwraith.Notebooks/Deckwraith.Notebooks.csproj" />
     <ProjectReference Include="../Deckwraith.Persistence/Deckwraith.Persistence.csproj" />
     <ProjectReference Include="../Deckwraith.PowerShell/Deckwraith.PowerShell.csproj" />
     <ProjectReference Include="../Deckwraith.Providers.OpenAI/Deckwraith.Providers.OpenAI.csproj" />

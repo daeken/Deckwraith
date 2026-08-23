@@ -61,6 +61,20 @@ public sealed class DeckbookRuntime : IDisposable
         await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
+            if (!_store.Exists(address.Wraith, address.Haunt))
+            {
+                return new DeckbookSnapshot(
+                    new DeckbookDocument(
+                        DeckbookDocument.CurrentSchemaVersion,
+                        address.Wraith.Value,
+                        address.Haunt.Value,
+                        0,
+                        new Dictionary<string, string>(StringComparer.Ordinal),
+                        [],
+                        _clock.UtcNow),
+                    []);
+            }
+
             var deckbook = await _store.EnsureAsync(
                 address.Wraith, address.Haunt, _clock.UtcNow, cancellationToken)
                 .ConfigureAwait(false);

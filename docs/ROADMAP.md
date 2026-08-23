@@ -49,7 +49,7 @@ discovery commands, strict portable-value conversion, and atomic candidate-runsp
 authored tool reload. Failed reloads retain the previous known-good command set and emit durable
 diagnostics; successful replacement records an explicit no-replay lifecycle event.
 
-## 4. Linear deckbooks
+## 4. Linear deckbooks — implemented
 
 Turn mutable working context into an executable, Git-readable notebook.
 
@@ -60,6 +60,12 @@ Turn mutable working context into an executable, Git-readable notebook.
 - Compile pinned cells, an active-cell window, and the compact index into bounded model context.
 
 Acceptance: property and end-to-end tests prove edits never execute, suffix staleness is exact, failures stop run-remaining, prior output remains inspectable, and context excludes unrelated large cells.
+
+Deckbooks now persist a small ordered manifest, per-cell metadata and language-appropriate source
+siblings, plus immutable hash-addressed output documents. A provider-neutral kernel contract owns
+streaming values/errors/interruption; the PowerShell adapter executes against the wraith's hosted
+runspace and records version and epoch provenance. Context compilation deterministically includes
+pins and a bounded active-cell window while retaining a compact index of excluded cells.
 
 Milestones 5–8 then add the C# kernel, MCP discovery, compaction/recovery hardening, and the Electron/React product shell plus the remaining providers.
 

@@ -128,6 +128,7 @@ public sealed class PowerShellRuntimeManager : IDisposable
             {
                 ObjectDisposedException.ThrowIf(_disposed, this);
                 _sessionContext.SetInvocation(invocation);
+                var executionEpoch = _info.Epoch;
                 IReadOnlyList<PSObject> output;
                 IReadOnlyList<ErrorRecord> errors;
                 using (var powershell = System.Management.Automation.PowerShell.Create())
@@ -151,7 +152,8 @@ public sealed class PowerShellRuntimeManager : IDisposable
                     toolsReloaded = true;
                 }
 
-                return new PowerShellExecutionResult(output, errors, _info, toolsReloaded);
+                return new PowerShellExecutionResult(
+                    output, errors, _info, executionEpoch, toolsReloaded);
             }
             finally
             {

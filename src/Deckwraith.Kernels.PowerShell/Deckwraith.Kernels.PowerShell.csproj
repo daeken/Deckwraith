@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <PackageReference Include="Microsoft.PowerShell.SDK" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="../Deckwraith.Kernels.Abstractions/Deckwraith.Kernels.Abstractions.csproj" />
+    <ProjectReference Include="../Deckwraith.PowerShell/Deckwraith.PowerShell.csproj" />
+  </ItemGroup>
+</Project>
