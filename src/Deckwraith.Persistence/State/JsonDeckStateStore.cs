@@ -50,13 +50,13 @@ public sealed class JsonDeckStateStore : IDeckStateStore
             cancellationToken).ConfigureAwait(false);
     }
 
-    public async Task<int> RecoverPendingRenamesAsync(
+    public async Task<IReadOnlyList<RenameIntent>> RecoverPendingRenamesAsync(
         DateTimeOffset now,
         CancellationToken cancellationToken)
     {
         EnsureInitialized();
         var transactionPath = Path.Combine(RootPath, "recovery", "renames");
-        var recovered = 0;
+        var recovered = new List<RenameIntent>();
         foreach (var path in Directory.EnumerateFiles(transactionPath, "*.json").Order(StringComparer.Ordinal))
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -67,8 +67,13 @@ public sealed class JsonDeckStateStore : IDeckStateStore
                 continue;
             }
 
-            await CompleteRenameAsync(intent, path, now, cancellationToken).ConfigureAwait(false);
-            recovered++;
+            if (intent.Status is RenameStatus.Prepared)
+            {
+                intent = await ApplyRenameAsync(intent, path, now, cancellationToken)
+                    .ConfigureAwait(false);
+            }
+
+            recovered.Add(intent);
         }
 
         return recovered;
@@ -167,23 +172,56 @@ public sealed class JsonDeckStateStore : IDeckStateStore
             .ConfigureAwait(false);
     }
 
-    public Task RenameWraithAsync(
+    public Task<RenameIntent> RenameWraithAsync(
         CanonicalName source,
         CanonicalName target,
         DateTimeOffset now,
         CancellationToken cancellationToken) =>
-        PrepareAndCompleteRenameAsync(
+        PrepareAndApplyRenameAsync(
             RenameSubject.Wraith, source, target, now, cancellationToken);
 
-    public Task RenameHauntAsync(
+    public Task<RenameIntent> RenameHauntAsync(
         CanonicalName source,
         CanonicalName target,
         DateTimeOffset now,
         CancellationToken cancellationToken) =>
-        PrepareAndCompleteRenameAsync(
+        PrepareAndApplyRenameAsync(
             RenameSubject.Haunt, source, target, now, cancellationToken);
 
-    private async Task PrepareAndCompleteRenameAsync(
+    public async Task CompleteRenameAsync(
+        string operationId,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        EnsureInitialized();
+        if (!Guid.TryParseExact(operationId, "N", out _))
+        {
+            throw new ArgumentException("A rename operation ID must be a compact GUID.", nameof(operationId));
+        }
+
+        var path = Path.Combine(RootPath, "recovery", "renames", $"{operationId}.json");
+        if (!File.Exists(path))
+        {
+            throw new DeckStateException($"Rename operation '{operationId}' does not exist.");
+        }
+
+        var intent = await AtomicJsonFile.ReadAsync<RenameIntent>(path, cancellationToken)
+            .ConfigureAwait(false);
+        if (intent.Status is RenameStatus.Prepared)
+        {
+            throw new DeckStateException($"Rename operation '{operationId}' has not been applied.");
+        }
+
+        if (intent.Status is not RenameStatus.Completed)
+        {
+            await AtomicJsonFile.WriteAsync(
+                path,
+                intent with { Status = RenameStatus.Completed, CompletedAt = now },
+                cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    private async Task<RenameIntent> PrepareAndApplyRenameAsync(
         RenameSubject subject,
         CanonicalName source,
         CanonicalName target,
@@ -219,10 +257,10 @@ public sealed class JsonDeckStateStore : IDeckStateStore
             null);
         var intentPath = Path.Combine(RootPath, "recovery", "renames", $"{operationId}.json");
         await AtomicJsonFile.WriteAsync(intentPath, intent, cancellationToken).ConfigureAwait(false);
-        await CompleteRenameAsync(intent, intentPath, now, cancellationToken).ConfigureAwait(false);
+        return await ApplyRenameAsync(intent, intentPath, now, cancellationToken).ConfigureAwait(false);
     }
 
-    private async Task CompleteRenameAsync(
+    private async Task<RenameIntent> ApplyRenameAsync(
         RenameIntent intent,
         string intentPath,
         DateTimeOffset now,
@@ -280,10 +318,12 @@ public sealed class JsonDeckStateStore : IDeckStateStore
             },
             cancellationToken).ConfigureAwait(false);
 
+        var applied = intent with { Status = RenameStatus.Applied };
         await AtomicJsonFile.WriteAsync(
             intentPath,
-            intent with { Status = RenameStatus.Completed, CompletedAt = now },
+            applied,
             cancellationToken).ConfigureAwait(false);
+        return applied;
     }
 
     private static async Task UpdateWraithDocumentsAsync(

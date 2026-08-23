@@ -11,7 +11,9 @@ public interface IDeckStateStore
 
     Task InitializeAsync(DateTimeOffset now, CancellationToken cancellationToken);
 
-    Task<int> RecoverPendingRenamesAsync(DateTimeOffset now, CancellationToken cancellationToken);
+    Task<IReadOnlyList<RenameIntent>> RecoverPendingRenamesAsync(
+        DateTimeOffset now,
+        CancellationToken cancellationToken);
 
     Task<IdentityDocument> CreateWraithAsync(
         CanonicalName name,
@@ -29,15 +31,20 @@ public interface IDeckStateStore
 
     Task<IdentityDocument> ReadIdentityAsync(CanonicalName name, CancellationToken cancellationToken);
 
-    Task RenameWraithAsync(
+    Task<RenameIntent> RenameWraithAsync(
         CanonicalName source,
         CanonicalName target,
         DateTimeOffset now,
         CancellationToken cancellationToken);
 
-    Task RenameHauntAsync(
+    Task<RenameIntent> RenameHauntAsync(
         CanonicalName source,
         CanonicalName target,
+        DateTimeOffset now,
+        CancellationToken cancellationToken);
+
+    Task CompleteRenameAsync(
+        string operationId,
         DateTimeOffset now,
         CancellationToken cancellationToken);
 }

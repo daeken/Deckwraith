@@ -38,6 +38,25 @@ public sealed class JsonlAgentArchive : IAgentArchive
         try
         {
             var existing = await ReadAllInternalAsync(wraith, cancellationToken).ConfigureAwait(false);
+            if (archiveEvent.EventId is { } requestedEventId)
+            {
+                var duplicate = existing.FirstOrDefault(record =>
+                    StringComparer.Ordinal.Equals(record.EventId, requestedEventId));
+                if (duplicate is not null)
+                {
+                    if (!StringComparer.Ordinal.Equals(duplicate.Agent, archiveEvent.Agent) ||
+                        !StringComparer.Ordinal.Equals(duplicate.Haunt, archiveEvent.Haunt) ||
+                        !StringComparer.Ordinal.Equals(duplicate.Kind, archiveEvent.Kind) ||
+                        !JsonElement.DeepEquals(duplicate.Payload, archiveEvent.Payload))
+                    {
+                        throw new DeckStateException(
+                            $"Archive event ID '{requestedEventId}' was reused for different content.");
+                    }
+
+                    return duplicate;
+                }
+            }
+
             var sequence = existing.Count == 0 ? 1 : checked(existing[^1].Sequence + 1);
             var previousHash = existing.Count == 0 ? null : existing[^1].ContentHash;
             var timestamp = archiveEvent.Timestamp ?? DateTimeOffset.UtcNow;

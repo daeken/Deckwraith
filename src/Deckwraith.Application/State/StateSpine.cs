@@ -89,15 +89,17 @@ public sealed class StateSpine : IDisposable
             var resolvedSource = await _state.ResolveWraithAsync(
                 CanonicalName.Parse(source), cancellationToken).ConfigureAwait(false);
             var canonicalTarget = CanonicalName.Parse(target);
-            await _state.RenameWraithAsync(
+            var intent = await _state.RenameWraithAsync(
                 resolvedSource, canonicalTarget, _clock.UtcNow, cancellationToken).ConfigureAwait(false);
             await _archive.AppendAsync(
                 Event(canonicalTarget, "wraith.renamed", new
                 {
                     previousName = resolvedSource.Value,
                     name = canonicalTarget.Value,
-                }),
+                }, eventId: intent.OperationId, timestamp: intent.CreatedAt),
                 cancellationToken).ConfigureAwait(false);
+            await _state.CompleteRenameAsync(
+                intent.OperationId, _clock.UtcNow, cancellationToken).ConfigureAwait(false);
             var commit = await _checkpoints.CheckpointAsync(
                 "wraith-renamed", canonicalTarget, null, cancellationToken).ConfigureAwait(false);
             return new StateMutation<CanonicalName>(canonicalTarget, commit);
@@ -113,8 +115,10 @@ public sealed class StateSpine : IDisposable
             var resolvedSource = await _state.ResolveHauntAsync(
                 CanonicalName.Parse(source), cancellationToken).ConfigureAwait(false);
             var canonicalTarget = CanonicalName.Parse(target);
-            await _state.RenameHauntAsync(
+            var intent = await _state.RenameHauntAsync(
                 resolvedSource, canonicalTarget, _clock.UtcNow, cancellationToken).ConfigureAwait(false);
+            await _state.CompleteRenameAsync(
+                intent.OperationId, _clock.UtcNow, cancellationToken).ConfigureAwait(false);
             var commit = await _checkpoints.CheckpointAsync(
                 "haunt-renamed", null, canonicalTarget, cancellationToken).ConfigureAwait(false);
             return new StateMutation<CanonicalName>(canonicalTarget, commit);
@@ -231,18 +235,40 @@ public sealed class StateSpine : IDisposable
         CanonicalName wraith,
         string kind,
         object payload,
-        CanonicalName? haunt = null) =>
+        CanonicalName? haunt = null,
+        string? eventId = null,
+        DateTimeOffset? timestamp = null) =>
         new(
             wraith.Value,
             kind,
             JsonSerializer.SerializeToElement(payload),
-            haunt?.Value);
+            haunt?.Value,
+            EventId: eventId,
+            Timestamp: timestamp);
 
     private async Task RecoverIfNeededAsync(CancellationToken cancellationToken)
     {
         var recovered = await _state.RecoverPendingRenamesAsync(
             _clock.UtcNow, cancellationToken).ConfigureAwait(false);
-        if (recovered > 0)
+        foreach (var intent in recovered)
+        {
+            if (intent.Subject is RenameSubject.Wraith)
+            {
+                var target = CanonicalName.Parse(intent.Target);
+                await _archive.AppendAsync(
+                    Event(target, "wraith.renamed", new
+                    {
+                        previousName = intent.Source,
+                        name = intent.Target,
+                    }, eventId: intent.OperationId, timestamp: intent.CreatedAt),
+                    cancellationToken).ConfigureAwait(false);
+            }
+
+            await _state.CompleteRenameAsync(
+                intent.OperationId, _clock.UtcNow, cancellationToken).ConfigureAwait(false);
+        }
+
+        if (recovered.Count > 0)
         {
             await _checkpoints.CheckpointAsync(
                 "rename-recovered", null, null, cancellationToken).ConfigureAwait(false);

@@ -77,6 +77,7 @@ public enum RenameSubject
 public enum RenameStatus
 {
     Prepared,
+    Applied,
     Completed,
 }
 

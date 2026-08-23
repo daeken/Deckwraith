@@ -14,6 +14,39 @@ namespace Deckwraith.IntegrationTests;
 public sealed class StateSpineEndToEndTests
 {
     [Fact]
+    public async Task AppliedRenameIsRecoveredWithExactlyOneArchiveEvent()
+    {
+        using var temporaryDirectory = new TemporaryDirectory();
+        var state = new JsonDeckStateStore(temporaryDirectory.Path);
+        var archive = new JsonlAgentArchive(temporaryDirectory.Path);
+        var artifacts = new ContentAddressedArtifactStore(temporaryDirectory.Path);
+        var checkpoints = new GitCheckpointStore(temporaryDirectory.Path);
+        using var spine = new StateSpine(state, archive, artifacts, checkpoints, new FixedClock());
+        await spine.InitializeAsync(CancellationToken.None);
+        await spine.CreateWraithAsync("wraith1", CancellationToken.None);
+
+        var intent = await state.RenameWraithAsync(
+            CanonicalName.Parse("wraith1"),
+            CanonicalName.Parse("vesper"),
+            new FixedClock().UtcNow,
+            CancellationToken.None);
+        Assert.Equal(RenameStatus.Applied, intent.Status);
+
+        Assert.Equal("vesper", (await spine.ResolveWraithAsync(
+            "wraith1", CancellationToken.None)).Value);
+        Assert.Equal("vesper", (await spine.ResolveWraithAsync(
+            "wraith1", CancellationToken.None)).Value);
+        var records = await spine.ReadArchiveAsync("wraith1", CancellationToken.None);
+        Assert.Equal(2, records.Count);
+        Assert.Equal(intent.OperationId, records[^1].EventId);
+        Assert.Equal("wraith.renamed", records[^1].Kind);
+        Assert.Equal(string.Empty, await RunGitAsync(
+            temporaryDirectory.Path,
+            ["status", "--porcelain"],
+            CancellationToken.None));
+    }
+
+    [Fact]
     public async Task StateSpinePreservesNamesHistoryArtifactsAndCleanCheckpoints()
     {
         using var temporaryDirectory = new TemporaryDirectory();
