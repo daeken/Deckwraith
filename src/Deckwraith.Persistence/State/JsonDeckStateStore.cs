@@ -347,7 +347,12 @@ public sealed class JsonDeckStateStore : IDeckStateStore
             .ConfigureAwait(false);
         await AtomicJsonFile.WriteAsync(
             identityPath,
-            identity with { Name = target.Value, UpdatedAt = now },
+            identity with
+            {
+                SchemaVersion = IdentityDocument.CurrentSchemaVersion,
+                Name = target.Value,
+                UpdatedAt = now,
+            },
             cancellationToken).ConfigureAwait(false);
     }
 

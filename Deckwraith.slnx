@@ -4,6 +4,8 @@
     <Project Path="src/Deckwraith.Core/Deckwraith.Core.csproj" />
     <Project Path="src/Deckwraith.Headless/Deckwraith.Headless.csproj" />
     <Project Path="src/Deckwraith.Persistence/Deckwraith.Persistence.csproj" />
+    <Project Path="src/Deckwraith.Providers.Abstractions/Deckwraith.Providers.Abstractions.csproj" />
+    <Project Path="src/Deckwraith.Providers.OpenAI/Deckwraith.Providers.OpenAI.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/Deckwraith.Core.Tests/Deckwraith.Core.Tests.csproj" />

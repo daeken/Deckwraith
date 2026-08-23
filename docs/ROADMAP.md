@@ -8,7 +8,7 @@ Own the durable namespace and history before adding inference.
 
 - Initialize a dedicated, restrictive, Git-backed deck-state repository without remotes.
 - Create, resolve, and recovery-safely rename wraiths and haunts using human-readable canonical names only.
-- Persist sparse identities and reserved aliases.
+- Persist sparse identities—including personality and open calibration—and reserved aliases.
 - Append sequenced, hash-checked per-wraith archive events without rewriting prior records.
 - Store immutable content-addressed artifacts.
 - Checkpoint every coherent public mutation with stable Deckwraith trailers.

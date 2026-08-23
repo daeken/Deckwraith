@@ -352,8 +352,12 @@ Redaction is defense in depth against accidental display and routine log leakage
 
 ```json
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "name": "wraith1",
+  "personality": "",
+  "calibration": {
+    "register": ""
+  },
   "pronouns": [],
   "selfDescription": "",
   "knownTendencies": [],
@@ -361,6 +365,8 @@ Redaction is defense in depth against accidental display and routine log leakage
   "updatedAt": "2026-08-23T20:15:00Z"
 }
 ```
+
+`personality` is the wraith's broad account of who it is as a person rather than a narrow style prompt. `calibration` is an open string dictionary for operational self-calibration, normally including at least `register` for how the wraith communicates and optionally entries covering opsec, disclosure boundaries, uncertainty, risk posture, or other durable behavioral adjustments. Deckwraith assigns no closed vocabulary to calibration keys.
 
 `knownTendencies` and `openQuestions` are intentionally arrays of strings. Deckwraith assigns no sub-schema or workflow semantics to their contents; the wraith decides what each entry means and how to phrase or maintain it.
 
@@ -992,7 +998,7 @@ V1 includes:
 - Creation, configuration, wake, sleep, resume, and deletion/archival of wraiths.
 - Canonical human-readable agent and haunt names with no parallel opaque IDs, plus atomic rename and reserved-alias behavior.
 - Multiple configured wraiths, with at most one active run per wraith and simple concurrent execution across wraiths.
-- Minimal JSON identity documents with name, pronouns, self-description, string-array open questions, and string-array known tendencies; Git commits provide identity history.
+- Minimal JSON identity documents with name, personality, open string calibration (including register), pronouns, self-description, string-array open questions, and string-array known tendencies; Git commits provide identity history.
 - Per-agent append-only JSONL archives and behavioral privacy in context/tool APIs.
 - Per-agent Git-backed `context.json` files containing the materialized provider-neutral context actually carried forward.
 - Tool call/result elision after a deck-wide configurable number of completed model turns with per-agent overrides, paired removal, compact provenance markers, and complete archive retention.

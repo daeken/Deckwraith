@@ -40,19 +40,39 @@ public sealed record WraithDocument(
         new(CurrentSchemaVersion, name.Value, null, [], now);
 }
 
-public sealed record IdentityDocument(
-    int SchemaVersion,
-    string Name,
-    IReadOnlyList<string> Pronouns,
-    string SelfDescription,
-    IReadOnlyList<string> KnownTendencies,
-    IReadOnlyList<string> OpenQuestions,
-    DateTimeOffset UpdatedAt)
+public sealed record IdentityDocument
 {
-    public const int CurrentSchemaVersion = 1;
+    public const int CurrentSchemaVersion = 2;
+
+    public int SchemaVersion { get; init; }
+
+    public string Name { get; init; } = string.Empty;
+
+    public string Personality { get; init; } = string.Empty;
+
+    public IReadOnlyDictionary<string, string> Calibration { get; init; } =
+        new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["register"] = string.Empty,
+        };
+
+    public IReadOnlyList<string> Pronouns { get; init; } = [];
+
+    public string SelfDescription { get; init; } = string.Empty;
+
+    public IReadOnlyList<string> KnownTendencies { get; init; } = [];
+
+    public IReadOnlyList<string> OpenQuestions { get; init; } = [];
+
+    public DateTimeOffset UpdatedAt { get; init; }
 
     public static IdentityDocument CreateSparse(CanonicalName name, DateTimeOffset now) =>
-        new(CurrentSchemaVersion, name.Value, [], string.Empty, [], [], now);
+        new()
+        {
+            SchemaVersion = CurrentSchemaVersion,
+            Name = name.Value,
+            UpdatedAt = now,
+        };
 }
 
 public sealed record HauntDocument(
