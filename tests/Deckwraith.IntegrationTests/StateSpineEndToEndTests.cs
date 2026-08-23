@@ -40,7 +40,7 @@ public sealed class StateSpineEndToEndTests
         Assert.Equal(2, records.Count);
         Assert.Equal(intent.OperationId, records[^1].EventId);
         Assert.Equal("wraith.renamed", records[^1].Kind);
-        Assert.Equal(string.Empty, await RunGitAsync(
+        Assert.Equal(string.Empty, await RunGitForTestsAsync(
             temporaryDirectory.Path,
             ["status", "--porcelain"],
             CancellationToken.None));
@@ -107,22 +107,22 @@ public sealed class StateSpineEndToEndTests
 
         await Assert.ThrowsAsync<DeckStateException>(() => spine.CreateWraithAsync(
             "wraith1", CancellationToken.None));
-        Assert.Equal(string.Empty, await RunGitAsync(
+        Assert.Equal(string.Empty, await RunGitForTestsAsync(
             temporaryDirectory.Path,
             ["status", "--porcelain"],
             CancellationToken.None));
-        Assert.Equal(string.Empty, await RunGitAsync(
+        Assert.Equal(string.Empty, await RunGitForTestsAsync(
             temporaryDirectory.Path,
             ["remote"],
             CancellationToken.None));
-        var commitCount = await RunGitAsync(
+        var commitCount = await RunGitForTestsAsync(
             temporaryDirectory.Path,
             ["rev-list", "--count", "HEAD"],
             CancellationToken.None);
         Assert.Equal("7", commitCount);
     }
 
-    private static async Task<string> RunGitAsync(
+    internal static async Task<string> RunGitForTestsAsync(
         string rootPath,
         IReadOnlyList<string> arguments,
         CancellationToken cancellationToken)

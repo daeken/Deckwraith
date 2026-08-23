@@ -1,6 +1,8 @@
 using System.Text.Json;
 using Deckwraith.Core.Archives;
 using Deckwraith.Core.Naming;
+using Deckwraith.Core.Context;
+using Deckwraith.Core.Runs;
 using Deckwraith.Core.State;
 
 namespace Deckwraith.Application.Abstractions;
@@ -80,6 +82,41 @@ public interface ICheckpointStore
         string reason,
         CanonicalName? wraith,
         CanonicalName? haunt,
+        CancellationToken cancellationToken);
+}
+
+public interface IInferenceStateStore
+{
+    Task<CurrentContextDocument> EnsureContextAsync(
+        CanonicalName wraith,
+        string identityHash,
+        int toolElisionTurns,
+        DateTimeOffset now,
+        CancellationToken cancellationToken);
+
+    Task<CurrentContextDocument> ReadContextAsync(
+        CanonicalName wraith,
+        CancellationToken cancellationToken);
+
+    Task WriteContextAsync(
+        CanonicalName wraith,
+        CurrentContextDocument context,
+        int expectedRevision,
+        CancellationToken cancellationToken);
+
+    Task CreateRunAsync(
+        CanonicalName wraith,
+        RunDocument run,
+        CancellationToken cancellationToken);
+
+    Task<RunDocument> ReadRunAsync(
+        CanonicalName wraith,
+        string runId,
+        CancellationToken cancellationToken);
+
+    Task WriteRunAsync(
+        CanonicalName wraith,
+        RunDocument run,
         CancellationToken cancellationToken);
 }
 
