@@ -301,8 +301,201 @@ public sealed class DeckbookRuntimeTests
             environment.Path, ["status", "--porcelain"]));
     }
 
+    [Fact]
+    public async Task RenamedAliasesRemainStructuralAnchorsAndDeletedNamesStayReserved()
+    {
+        using var environment = await TestEnvironment.CreateAsync();
+        foreach (var name in LinearCellNames)
+        {
+            await environment.Runtime.InsertAsync(
+                "wraith1",
+                "deckwraith",
+                new InsertDeckbookCell(name, DeckbookCellKind.Code, $"'{name}'", "powershell"));
+        }
+
+        await environment.Runtime.RunRemainingAsync("wraith1", "deckwraith", "one");
+        var beforeRename = await environment.Runtime.GetAsync("wraith1", "deckwraith");
+        var retainedOutput = Cell(beforeRename, "two").Cell.LastExecution?.OutputHash;
+        Assert.NotNull(retainedOutput);
+
+        await environment.Runtime.RenameAsync("wraith1", "deckwraith", "two", "middle");
+        await environment.Runtime.InsertAsync(
+            "wraith1",
+            "deckwraith",
+            new InsertDeckbookCell(
+                "inserted",
+                DeckbookCellKind.Code,
+                "'inserted'",
+                "powershell",
+                Before: "two"));
+        var inserted = await environment.Runtime.GetAsync("wraith1", "deckwraith");
+        Assert.Equal(
+            ["one", "inserted", "middle", "three"],
+            inserted.Cells.Select(cell => cell.Cell.Name));
+        Assert.False(Cell(inserted, "one").Cell.IsStale);
+        Assert.All(inserted.Cells.Skip(1), cell => Assert.True(cell.Cell.IsStale));
+
+        await environment.Runtime.MoveAsync(
+            "wraith1", "deckwraith", "three", before: "two");
+        var moved = await environment.Runtime.GetAsync("wraith1", "deckwraith");
+        Assert.Equal(
+            ["one", "inserted", "three", "middle"],
+            moved.Cells.Select(cell => cell.Cell.Name));
+
+        var deleted = await environment.Runtime.DeleteAsync(
+            "wraith1", "deckwraith", "two");
+        Assert.DoesNotContain(deleted.Cells, cell => cell.Cell.Name == "middle");
+        await Assert.ThrowsAsync<DeckStateException>(() => environment.Runtime.InsertAsync(
+            "wraith1",
+            "deckwraith",
+            new InsertDeckbookCell("two", DeckbookCellKind.Code, "'reuse'", "powershell")));
+        await Assert.ThrowsAsync<DeckStateException>(() => environment.Runtime.InsertAsync(
+            "wraith1",
+            "deckwraith",
+            new InsertDeckbookCell("middle", DeckbookCellKind.Code, "'reuse'", "powershell")));
+        Assert.True(File.Exists(OutputPath(environment.Path, retainedOutput)));
+    }
+
+    [Theory]
+    [InlineData(7)]
+    [InlineData(41)]
+    [InlineData(137)]
+    public async Task RandomizedStructuralOperationsPreserveLinearInvariants(int seed)
+    {
+        using var environment = await TestEnvironment.CreateAsync();
+        var expected = new List<ExpectedCell>();
+        for (var index = 0; index < 5; index++)
+        {
+            var name = $"cell-{index}";
+            await environment.Runtime.InsertAsync(
+                "wraith1",
+                "deckwraith",
+                new InsertDeckbookCell(name, DeckbookCellKind.Code, $"'{name}'", "powershell"));
+            expected.Add(new ExpectedCell(name, IsStale: true, OutputHash: null));
+        }
+
+        await environment.Runtime.RunRemainingAsync("wraith1", "deckwraith", expected[0].Name);
+        var fresh = await environment.Runtime.GetAsync("wraith1", "deckwraith");
+        expected = fresh.Cells.Select(cell => new ExpectedCell(
+            cell.Cell.Name,
+            cell.Cell.IsStale,
+            cell.Cell.LastExecution?.OutputHash)).ToList();
+        var retainedOutputs = expected.Select(cell => cell.OutputHash).OfType<string>().ToHashSet(
+            StringComparer.Ordinal);
+        var invocationCount = environment.Kernel.InvocationCount;
+        var random = new Random(seed);
+        var nextName = 10;
+
+        for (var operation = 0; operation < 10; operation++)
+        {
+            switch (random.Next(5))
+            {
+                case 0:
+                {
+                    var insertionIndex = random.Next(expected.Count + 1);
+                    var name = $"cell-{nextName++}";
+                    await environment.Runtime.InsertAsync(
+                        "wraith1",
+                        "deckwraith",
+                        new InsertDeckbookCell(
+                            name,
+                            DeckbookCellKind.Code,
+                            $"'{name}'",
+                            "powershell",
+                            Before: insertionIndex < expected.Count
+                                ? expected[insertionIndex].Name
+                                : null));
+                    expected.Insert(insertionIndex, new ExpectedCell(name, true, null));
+                    MarkStale(expected, insertionIndex);
+                    break;
+                }
+                case 1:
+                {
+                    var editIndex = random.Next(expected.Count);
+                    await environment.Runtime.EditAsync(
+                        "wraith1",
+                        "deckwraith",
+                        expected[editIndex].Name,
+                        $"'revision-{operation}'");
+                    MarkStale(expected, editIndex);
+                    break;
+                }
+                case 2 when expected.Count > 1:
+                {
+                    var oldIndex = random.Next(expected.Count);
+                    var moving = expected[oldIndex];
+                    expected.RemoveAt(oldIndex);
+                    var newIndex = random.Next(expected.Count + 1);
+                    await environment.Runtime.MoveAsync(
+                        "wraith1",
+                        "deckwraith",
+                        moving.Name,
+                        before: newIndex < expected.Count ? expected[newIndex].Name : null);
+                    expected.Insert(newIndex, moving);
+                    MarkStale(expected, Math.Min(oldIndex, newIndex));
+                    break;
+                }
+                case 3 when expected.Count > 1:
+                {
+                    var deleteIndex = random.Next(expected.Count);
+                    var removed = expected[deleteIndex];
+                    await environment.Runtime.DeleteAsync(
+                        "wraith1", "deckwraith", removed.Name);
+                    expected.RemoveAt(deleteIndex);
+                    MarkStale(expected, deleteIndex);
+                    break;
+                }
+                default:
+                {
+                    var renameIndex = random.Next(expected.Count);
+                    var renamed = expected[renameIndex];
+                    var target = $"renamed-{nextName++}";
+                    await environment.Runtime.RenameAsync(
+                        "wraith1", "deckwraith", renamed.Name, target);
+                    expected[renameIndex] = renamed with { Name = target };
+                    break;
+                }
+            }
+
+            var actual = await environment.Runtime.GetAsync("wraith1", "deckwraith");
+            Assert.Equal(expected.Select(cell => cell.Name), actual.Cells.Select(cell => cell.Cell.Name));
+            Assert.Equal(
+                expected.Select(cell => cell.IsStale),
+                actual.Cells.Select(cell => cell.Cell.IsStale));
+            Assert.Equal(
+                expected.Select(cell => cell.OutputHash),
+                actual.Cells.Select(cell => cell.Cell.LastExecution?.OutputHash));
+            Assert.Equal(
+                actual.Cells.Count,
+                actual.Cells.Select(cell => cell.Cell.Position).Distinct().Count());
+            Assert.True(actual.Cells.Select(cell => cell.Cell.Position).SequenceEqual(
+                actual.Cells.Select(cell => cell.Cell.Position).Order()));
+            Assert.Equal(invocationCount, environment.Kernel.InvocationCount);
+        }
+
+        Assert.All(retainedOutputs, hash =>
+            Assert.True(File.Exists(OutputPath(environment.Path, hash))));
+    }
+
     private static DeckbookCellView Cell(DeckbookSnapshot snapshot, string name) =>
         Assert.Single(snapshot.Cells, cell => cell.Cell.Name == name);
+
+    private static string OutputPath(string rootPath, string hash) => Path.Combine(
+        rootPath,
+        "agents",
+        "wraith1",
+        "deckbooks",
+        "deckwraith",
+        "outputs",
+        hash[7..] + ".json");
+
+    private static void MarkStale(List<ExpectedCell> cells, int from)
+    {
+        for (var index = from; index < cells.Count; index++)
+        {
+            cells[index] = cells[index] with { IsStale = true };
+        }
+    }
 
     private static async Task<string> RunGitAsync(string workingDirectory, string[] arguments)
     {
@@ -443,4 +636,6 @@ public sealed class DeckbookRuntimeTests
         public DateTimeOffset UtcNow => DateTimeOffset.UnixEpoch.AddTicks(
             Interlocked.Increment(ref _ticks));
     }
+
+    private sealed record ExpectedCell(string Name, bool IsStale, string? OutputHash);
 }

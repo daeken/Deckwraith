@@ -97,7 +97,9 @@ public sealed class DeckbookRuntime : IDisposable
                 address.Wraith, address.Haunt, deckbook, cancellationToken)
                 .ConfigureAwait(false)).ToList();
             EnsureNameAvailable(deckbook, cells, name);
-            var position = AllocatePosition(cells, request.Before, request.After);
+            var before = ResolveOptionalCellName(deckbook, cells, request.Before);
+            var after = ResolveOptionalCellName(deckbook, cells, request.After);
+            var position = AllocatePosition(cells, before, after);
             var insertionIndex = cells.Count(cell => cell.Position < position);
             var cell = new DeckbookCellDocument(
                 DeckbookCellDocument.CurrentSchemaVersion,
@@ -219,9 +221,18 @@ public sealed class DeckbookRuntime : IDisposable
             var state = await LoadStateAsync(address, cancellationToken).ConfigureAwait(false);
             var canonical = ResolveCellName(state.Deckbook, state.Cells, name);
             var oldIndex = state.Cells.FindIndex(cell => cell.Name == canonical);
+            var resolvedBefore = ResolveOptionalCellName(
+                state.Deckbook, state.Cells, before);
+            var resolvedAfter = ResolveOptionalCellName(
+                state.Deckbook, state.Cells, after);
+            if (resolvedBefore == canonical || resolvedAfter == canonical)
+            {
+                throw new DeckStateException("A cell cannot be moved relative to itself.");
+            }
+
             var moving = state.Cells[oldIndex];
             state.Cells.RemoveAt(oldIndex);
-            var position = AllocatePosition(state.Cells, before, after);
+            var position = AllocatePosition(state.Cells, resolvedBefore, resolvedAfter);
             moving = moving with { Position = position };
             state.Cells.Add(moving);
             state.Cells = Order(state.Cells);
@@ -347,7 +358,13 @@ public sealed class DeckbookRuntime : IDisposable
             state.Cells.RemoveAt(index);
             InvalidateFrom(state.Cells, index);
             _store.DeleteCell(address.Wraith, address.Haunt, canonical);
-            var deckbook = Advance(state.Deckbook, state.Cells);
+            var aliases = new Dictionary<string, string>(
+                state.Deckbook.CellAliases, StringComparer.Ordinal)
+            {
+                [canonical] = canonical,
+            };
+            var deckbook = Advance(
+                state.Deckbook with { CellAliases = aliases }, state.Cells);
             await PersistCellsAsync(address, deckbook, state.Cells, cancellationToken)
                 .ConfigureAwait(false);
             await AppendAsync(address, "deckbook.cell-deleted", new
@@ -1061,11 +1078,20 @@ public sealed class DeckbookRuntime : IDisposable
         IReadOnlyList<DeckbookCellDocument> cells,
         string name)
     {
-        if (cells.Any(cell => cell.Name == name) || deckbook.CellAliases.ContainsKey(name))
+        if (cells.Any(cell => cell.Name == name) ||
+            deckbook.CellAliases.ContainsKey(name) ||
+            deckbook.CellAliases.Values.Contains(name, StringComparer.Ordinal))
         {
             throw new DeckStateException($"Cell name '{name}' is already used or reserved as an alias.");
         }
     }
+
+    private static string? ResolveOptionalCellName(
+        DeckbookDocument deckbook,
+        IReadOnlyList<DeckbookCellDocument> cells,
+        string? name) => name is null
+            ? null
+            : ResolveCellName(deckbook, cells, name);
 
     private static string? NormalizeKernel(DeckbookCellKind kind, string? kernel)
     {
