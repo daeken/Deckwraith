@@ -82,6 +82,14 @@ internal static class DeckwraithCli
                     await ExecuteTurnAsync(rootPath, arguments, cancellationToken).ConfigureAwait(false),
                 "run-openai" when arguments.Length == 7 =>
                     await RunOpenAiAsync(rootPath, arguments, cancellationToken).ConfigureAwait(false),
+                "replace-shell" when arguments.Length == 6 =>
+                    await ReplaceShellAsync(rootPath, arguments, cancellationToken).ConfigureAwait(false),
+                "complete-run" when arguments.Length == 5 =>
+                    await EndRunAsync(rootPath, arguments, complete: true, cancellationToken)
+                        .ConfigureAwait(false),
+                "cancel-run" when arguments.Length == 5 =>
+                    await EndRunAsync(rootPath, arguments, complete: false, cancellationToken)
+                        .ConfigureAwait(false),
                 "powershell" when arguments.Length == 6 =>
                     await RunPowerShellAsync(rootPath, arguments, cancellationToken).ConfigureAwait(false),
                 "deckbook" when arguments.Length == 4 =>
@@ -182,6 +190,35 @@ internal static class DeckwraithCli
             new JsonlAgentArchive(rootPath),
             new GitCheckpointStore(rootPath),
             new ModelProviderRegistry([provider]));
+    }
+
+    private static async Task<object> ReplaceShellAsync(
+        string rootPath,
+        string[] arguments,
+        CancellationToken cancellationToken)
+    {
+        using var runtime = CreateInferenceRuntime(rootPath);
+        return await runtime.ReplaceShellAsync(
+            arguments[2],
+            arguments[3],
+            "openai-codex-subscription",
+            arguments[4],
+            arguments[5],
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    private static async Task<object> EndRunAsync(
+        string rootPath,
+        string[] arguments,
+        bool complete,
+        CancellationToken cancellationToken)
+    {
+        using var runtime = CreateInferenceRuntime(rootPath);
+        return complete
+            ? await runtime.CompleteRunAsync(
+                arguments[2], arguments[3], arguments[4], cancellationToken).ConfigureAwait(false)
+            : await runtime.CancelRunAsync(
+                arguments[2], arguments[3], arguments[4], cancellationToken).ConfigureAwait(false);
     }
 
     private static async Task<object> RunPowerShellAsync(
@@ -308,11 +345,15 @@ internal static class DeckwraithCli
         Console.Error.WriteLine(
             "Usage: deckwraith <init|create-wraith|create-haunt|rename-wraith|rename-haunt|" +
             "resolve-wraith|resolve-haunt|identity|archive|store-artifact|start-run|turn|run-openai|" +
+            "replace-shell|complete-run|cancel-run|" +
             "powershell|deckbook|add-cell|run-cell|run-remaining|deckbook-context> " +
             "<deck-path> [arguments]\n" +
             "  start-run <deck> <wraith> <haunt|-> <model> <objective>\n" +
             "  turn <deck> <wraith> <run-id> <message>\n" +
             "  run-openai <deck> <wraith> <haunt|-> <model> <objective> <message>\n" +
+            "  replace-shell <deck> <wraith> <run-id> <model> <reason>\n" +
+            "  complete-run <deck> <wraith> <run-id> <reason>\n" +
+            "  cancel-run <deck> <wraith> <run-id> <reason>\n" +
             "  powershell <deck> <wraith> <run|-> <haunt|-> <script>\n" +
             "  deckbook <deck> <wraith> <haunt>\n" +
             "  add-cell <deck> <wraith> <haunt> <name> <kind> <kernel|-> <source>\n" +

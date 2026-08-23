@@ -14,6 +14,17 @@ namespace Deckwraith.Application.Inference;
 
 public sealed record RunStartResult(RunDocument Run, CurrentContextDocument Context, string CommitId);
 
+public sealed record ShellReplacementResult(
+    RunDocument Run,
+    ShellDocument PreviousShell,
+    ShellDocument CurrentShell,
+    string CommitId);
+
+public sealed record RunEndResult(
+    RunDocument Run,
+    ShellDocument Shell,
+    string CommitId);
+
 public sealed record TurnResult(
     RunDocument Run,
     CurrentContextDocument Context,
@@ -109,6 +120,15 @@ public sealed class InferenceRuntime : IDisposable
                     model,
                 }),
                 cancellationToken).ConfigureAwait(false);
+            await _archive.AppendAsync(
+                ArchiveEventFor(run, shell, "shell.started", new
+                {
+                    shell.ShellId,
+                    shell.Provider,
+                    shell.Model,
+                    shell.StartedAt,
+                }),
+                cancellationToken).ConfigureAwait(false);
             var commit = await _checkpoints.CheckpointAsync(
                 "run-created", agent, resolvedHaunt, cancellationToken).ConfigureAwait(false);
             return new RunStartResult(run, context, commit);
@@ -118,6 +138,110 @@ public sealed class InferenceRuntime : IDisposable
             gate.Release();
         }
     }
+
+    public async Task<ShellReplacementResult> ReplaceShellAsync(
+        string wraith,
+        string runId,
+        string providerId,
+        string model,
+        string reason,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(providerId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(model);
+        ArgumentException.ThrowIfNullOrWhiteSpace(reason);
+        var agent = await _deckState.ResolveWraithAsync(
+            CanonicalName.Parse(wraith), cancellationToken).ConfigureAwait(false);
+        var gate = Gate(agent);
+        await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var run = await _inferenceState.ReadRunAsync(agent, runId, cancellationToken)
+                .ConfigureAwait(false);
+            if (run.Status is RunStatus.Completed or RunStatus.Cancelled or RunStatus.Failed)
+            {
+                throw new DeckStateException(
+                    $"Run '{runId}' is already terminal ({run.Status}).");
+            }
+
+            _ = _providers.GetProvider(providerId);
+            var previous = run.Shells[^1];
+            if (previous.EndedAt is not null)
+            {
+                throw new DeckStateException(
+                    $"Run '{runId}' has no active shell to replace.");
+            }
+
+            var ended = previous with
+            {
+                EndedAt = _clock.UtcNow,
+                EndReason = reason,
+            };
+            var current = new ShellDocument(
+                Guid.CreateVersion7(_clock.UtcNow).ToString("N"),
+                providerId,
+                model,
+                _clock.UtcNow,
+                null,
+                null);
+            var shells = run.Shells.ToArray();
+            shells[^1] = ended;
+            run = run with
+            {
+                Shells = [.. shells, current],
+                Status = RunStatus.AwaitingInput,
+                StatusReason = "shell-replaced",
+                UpdatedAt = _clock.UtcNow,
+            };
+            await _inferenceState.WriteRunAsync(agent, run, cancellationToken).ConfigureAwait(false);
+            await _archive.AppendAsync(
+                ArchiveEventFor(run, ended, "shell.ended", new
+                {
+                    ended.ShellId,
+                    ended.Provider,
+                    ended.Model,
+                    ended.StartedAt,
+                    ended.EndedAt,
+                    ended.EndReason,
+                }),
+                cancellationToken).ConfigureAwait(false);
+            await _archive.AppendAsync(
+                ArchiveEventFor(run, current, "shell.started", new
+                {
+                    current.ShellId,
+                    current.Provider,
+                    current.Model,
+                    current.StartedAt,
+                    previousShellId = ended.ShellId,
+                    reason,
+                }),
+                cancellationToken).ConfigureAwait(false);
+            var commit = await _checkpoints.CheckpointAsync(
+                "shell-replaced",
+                agent,
+                run.Haunt is null ? null : CanonicalName.Parse(run.Haunt),
+                cancellationToken).ConfigureAwait(false);
+            return new ShellReplacementResult(run, ended, current, commit);
+        }
+        finally
+        {
+            gate.Release();
+        }
+    }
+
+    public Task<RunEndResult> CompleteRunAsync(
+        string wraith,
+        string runId,
+        string reason,
+        CancellationToken cancellationToken = default) =>
+        EndRunAsync(wraith, runId, RunStatus.Completed, reason, cancellationToken);
+
+    public Task<RunEndResult> CancelRunAsync(
+        string wraith,
+        string runId,
+        string reason,
+        CancellationToken cancellationToken = default) =>
+        EndRunAsync(wraith, runId, RunStatus.Cancelled, reason, cancellationToken);
 
     public async Task<TurnResult> ExecuteTurnAsync(
         string wraith,
@@ -202,11 +326,22 @@ public sealed class InferenceRuntime : IDisposable
                 var invocation = await InvokeUntilTerminalAsync(
                     agent, run, shell, provider, identity, context, cancellationToken)
                     .ConfigureAwait(false);
-                context = invocation.Context with
+                var proposedContext = invocation.Context with
                 {
                     Revision = checked(invocation.Context.Revision + 1),
                     Turn = checked(invocation.Context.Turn + 1),
                     UpdatedAt = _clock.UtcNow,
+                };
+                var contextCommitted = await _archive.AppendAsync(
+                    ArchiveEventFor(run, shell, "context.committed", new
+                    {
+                        context = proposedContext,
+                    }),
+                    cancellationToken).ConfigureAwait(false);
+                context = proposedContext with
+                {
+                    ArchiveFrontier = contextCommitted.Sequence,
+                    UpdatedAt = contextCommitted.Timestamp,
                 };
                 await _inferenceState.WriteContextAsync(
                     agent, context, invocation.Context.Revision, cancellationToken).ConfigureAwait(false);
@@ -232,15 +367,34 @@ public sealed class InferenceRuntime : IDisposable
             }
             catch (Exception exception) when (exception is not OperationCanceledException)
             {
+                var failedShell = shell with
+                {
+                    EndedAt = _clock.UtcNow,
+                    EndReason = "run-failed",
+                };
+                var failedShells = run.Shells.ToArray();
+                failedShells[^1] = failedShell;
                 run = run with
                 {
                     Status = RunStatus.Failed,
                     StatusReason = exception.Message,
+                    Shells = failedShells,
                     UpdatedAt = _clock.UtcNow,
                 };
                 await _inferenceState.WriteRunAsync(agent, run, cancellationToken).ConfigureAwait(false);
                 await _archive.AppendAsync(
-                    ArchiveEventFor(run, shell, "run.failed", new
+                    ArchiveEventFor(run, failedShell, "shell.ended", new
+                    {
+                        failedShell.ShellId,
+                        failedShell.Provider,
+                        failedShell.Model,
+                        failedShell.StartedAt,
+                        failedShell.EndedAt,
+                        failedShell.EndReason,
+                    }),
+                    cancellationToken).ConfigureAwait(false);
+                await _archive.AppendAsync(
+                    ArchiveEventFor(run, failedShell, "run.failed", new
                     {
                         error = exception.Message,
                         errorType = exception.GetType().FullName,
@@ -251,6 +405,48 @@ public sealed class InferenceRuntime : IDisposable
                     agent,
                     run.Haunt is null ? null : CanonicalName.Parse(run.Haunt),
                     cancellationToken).ConfigureAwait(false);
+                throw;
+            }
+            catch (OperationCanceledException)
+            {
+                var cancelledShell = shell with
+                {
+                    EndedAt = _clock.UtcNow,
+                    EndReason = "run-cancelled",
+                };
+                var cancelledShells = run.Shells.ToArray();
+                cancelledShells[^1] = cancelledShell;
+                run = run with
+                {
+                    Status = RunStatus.Cancelled,
+                    StatusReason = "model-turn-cancelled",
+                    Shells = cancelledShells,
+                    UpdatedAt = _clock.UtcNow,
+                };
+                await _inferenceState.WriteRunAsync(
+                    agent, run, CancellationToken.None).ConfigureAwait(false);
+                await _archive.AppendAsync(
+                    ArchiveEventFor(run, cancelledShell, "shell.ended", new
+                    {
+                        cancelledShell.ShellId,
+                        cancelledShell.Provider,
+                        cancelledShell.Model,
+                        cancelledShell.StartedAt,
+                        cancelledShell.EndedAt,
+                        cancelledShell.EndReason,
+                    }),
+                    CancellationToken.None).ConfigureAwait(false);
+                await _archive.AppendAsync(
+                    ArchiveEventFor(run, cancelledShell, "run.cancelled", new
+                    {
+                        reason = run.StatusReason,
+                    }),
+                    CancellationToken.None).ConfigureAwait(false);
+                await _checkpoints.CheckpointAsync(
+                    "run-cancelled",
+                    agent,
+                    run.Haunt is null ? null : CanonicalName.Parse(run.Haunt),
+                    CancellationToken.None).ConfigureAwait(false);
                 throw;
             }
         }
@@ -313,32 +509,60 @@ public sealed class InferenceRuntime : IDisposable
 
             var toolCalls = new List<ModelToolCallCompleted>();
             ModelResponseCompleted? completed = null;
-            await foreach (var modelEvent in provider.RunAsync(request, cancellationToken)
-                .WithCancellation(cancellationToken).ConfigureAwait(false))
+            try
             {
-                switch (modelEvent)
+                await foreach (var modelEvent in provider.RunAsync(request, cancellationToken)
+                    .WithCancellation(cancellationToken).ConfigureAwait(false))
                 {
-                    case ModelTextDelta delta:
-                        accumulatedText.Append(delta.Delta);
-                        break;
-                    case ModelToolCallCompleted toolCall:
-                        toolCalls.Add(toolCall);
-                        break;
-                    case ModelUsageReported usage:
-                        totalUsage = AddUsage(totalUsage, usage);
-                        break;
-                    case ModelResponseCompleted responseCompleted:
-                        completed = responseCompleted;
-                        break;
-                    case ModelProviderError error:
-                        throw new ModelInvocationException(error.Code, error.Message, error.Retryable);
+                    switch (modelEvent)
+                    {
+                        case ModelTextDelta delta:
+                            accumulatedText.Append(delta.Delta);
+                            break;
+                        case ModelToolCallCompleted toolCall:
+                            toolCalls.Add(toolCall);
+                            break;
+                        case ModelUsageReported usage:
+                            totalUsage = AddUsage(totalUsage, usage);
+                            break;
+                        case ModelResponseCompleted responseCompleted:
+                            completed = responseCompleted;
+                            break;
+                        case ModelProviderError error:
+                            throw new ModelInvocationException(
+                                error.Code, error.Message, error.Retryable);
+                    }
+                }
+
+                if (completed is null)
+                {
+                    throw new ModelInvocationException(
+                        "incomplete-stream",
+                        "The provider stream ended without a terminal event.",
+                        true);
                 }
             }
-
-            if (completed is null)
+            catch (OperationCanceledException)
             {
-                throw new ModelInvocationException(
-                    "incomplete-stream", "The provider stream ended without a terminal event.", true);
+                await _archive.AppendAsync(
+                    ArchiveEventFor(run, shell, "model.cancelled", new
+                    {
+                        operationId = requestId,
+                    }),
+                    CancellationToken.None).ConfigureAwait(false);
+                throw;
+            }
+            catch (Exception exception)
+            {
+                await _archive.AppendAsync(
+                    ArchiveEventFor(run, shell, "model.failed", new
+                    {
+                        operationId = requestId,
+                        error = exception.Message,
+                        errorType = exception.GetType().FullName,
+                    }),
+                    cancellationToken).ConfigureAwait(false);
+                throw;
             }
 
             var modelCompleted = await _archive.AppendAsync(
@@ -432,7 +656,17 @@ public sealed class InferenceRuntime : IDisposable
                 CanonicalJson.ToElement(new { error = exception.Message }),
                 exception.Message);
         }
+        catch (OperationCanceledException)
+        {
+            result = new ToolExecutionResult(
+                OperationStatus.Cancelled,
+                CanonicalJson.ToElement(new { cancelled = true }),
+                "Tool execution was cancelled.");
+        }
 
+        var terminalCancellation = result.Status is OperationStatus.Cancelled
+            ? CancellationToken.None
+            : cancellationToken;
         var terminal = await _archive.AppendAsync(
             ArchiveEventFor(run, shell, $"tool.{result.Status.ToString().ToLowerInvariant()}", new
             {
@@ -442,7 +676,7 @@ public sealed class InferenceRuntime : IDisposable
                 result.Output,
                 result.Error,
             }),
-            cancellationToken).ConfigureAwait(false);
+            terminalCancellation).ConfigureAwait(false);
         context = context with
         {
             Revision = checked(context.Revision + 1),
@@ -460,8 +694,89 @@ public sealed class InferenceRuntime : IDisposable
             UpdatedAt = _clock.UtcNow,
         };
         await _inferenceState.WriteContextAsync(
-            agent, context, context.Revision - 1, cancellationToken).ConfigureAwait(false);
+            agent, context, context.Revision - 1, terminalCancellation).ConfigureAwait(false);
+        if (result.Status is OperationStatus.Cancelled)
+        {
+            throw new OperationCanceledException(cancellationToken);
+        }
+
         return context;
+    }
+
+    private async Task<RunEndResult> EndRunAsync(
+        string wraith,
+        string runId,
+        RunStatus status,
+        string reason,
+        CancellationToken cancellationToken)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(reason);
+        if (status is not (RunStatus.Completed or RunStatus.Cancelled))
+        {
+            throw new ArgumentOutOfRangeException(nameof(status), status, null);
+        }
+
+        var agent = await _deckState.ResolveWraithAsync(
+            CanonicalName.Parse(wraith), cancellationToken).ConfigureAwait(false);
+        var gate = Gate(agent);
+        await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var run = await _inferenceState.ReadRunAsync(agent, runId, cancellationToken)
+                .ConfigureAwait(false);
+            if (run.Status is RunStatus.Completed or RunStatus.Cancelled or RunStatus.Failed)
+            {
+                throw new DeckStateException(
+                    $"Run '{runId}' is already terminal ({run.Status}).");
+            }
+
+            var active = run.Shells[^1];
+            var ended = active.EndedAt is null
+                ? active with { EndedAt = _clock.UtcNow, EndReason = reason }
+                : active;
+            var shells = run.Shells.ToArray();
+            shells[^1] = ended;
+            run = run with
+            {
+                Status = status,
+                StatusReason = reason,
+                Shells = shells,
+                UpdatedAt = _clock.UtcNow,
+            };
+            await _inferenceState.WriteRunAsync(agent, run, cancellationToken).ConfigureAwait(false);
+            if (active.EndedAt is null)
+            {
+                await _archive.AppendAsync(
+                    ArchiveEventFor(run, ended, "shell.ended", new
+                    {
+                        ended.ShellId,
+                        ended.Provider,
+                        ended.Model,
+                        ended.StartedAt,
+                        ended.EndedAt,
+                        ended.EndReason,
+                    }),
+                    cancellationToken).ConfigureAwait(false);
+            }
+
+            await _archive.AppendAsync(
+                ArchiveEventFor(
+                    run,
+                    ended,
+                    status is RunStatus.Completed ? "run.completed" : "run.cancelled",
+                    new { reason }),
+                cancellationToken).ConfigureAwait(false);
+            var commit = await _checkpoints.CheckpointAsync(
+                status is RunStatus.Completed ? "run-completed" : "run-cancelled",
+                agent,
+                run.Haunt is null ? null : CanonicalName.Parse(run.Haunt),
+                cancellationToken).ConfigureAwait(false);
+            return new RunEndResult(run, ended, commit);
+        }
+        finally
+        {
+            gate.Release();
+        }
     }
 
     private SemaphoreSlim Gate(CanonicalName agent) =>

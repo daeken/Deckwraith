@@ -56,6 +56,8 @@ then start and continue a durable run:
 ```text
 dotnet run --project src/Deckwraith.Headless -- start-run /path/to/deck-state wraith1 deckwraith gpt-5.6-terra "Implement the next change"
 dotnet run --project src/Deckwraith.Headless -- turn /path/to/deck-state wraith1 RUN_ID "Begin."
+dotnet run --project src/Deckwraith.Headless -- replace-shell /path/to/deck-state wraith1 RUN_ID gpt-5.6-terra "fresh context window"
+dotnet run --project src/Deckwraith.Headless -- complete-run /path/to/deck-state wraith1 RUN_ID "objective achieved"
 ```
 
 For a one-shot smoke test, `run-openai` combines those operations. Deckwraith launches

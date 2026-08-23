@@ -37,7 +37,9 @@ public sealed class InferenceSpineEndToEndTests
 
         var provider = new ScriptedProvider();
         var tools = new RecordingToolBroker();
-        using var runtime = new InferenceRuntime(
+        RunStartResult started;
+        TurnResult first;
+        using (var runtime = new InferenceRuntime(
             deckState,
             inferenceState,
             archive,
@@ -45,17 +47,19 @@ public sealed class InferenceSpineEndToEndTests
             new ModelProviderRegistry([provider]),
             tools,
             new FixedClock(),
-            defaultToolElisionTurns: 0);
-        var started = await runtime.StartRunAsync(
-            "wraith1",
-            "deckwraith",
-            "Prove the inference spine",
-            "fake",
-            "test-model",
-            CancellationToken.None);
+            defaultToolElisionTurns: 0))
+        {
+            started = await runtime.StartRunAsync(
+                "wraith1",
+                "deckwraith",
+                "Prove the inference spine",
+                "fake",
+                "test-model",
+                CancellationToken.None);
 
-        var first = await runtime.ExecuteTurnAsync(
-            "wraith1", started.Run.RunId, "Use the test tool.", CancellationToken.None);
+            first = await runtime.ExecuteTurnAsync(
+                "wraith1", started.Run.RunId, "Use the test tool.", CancellationToken.None);
+        }
 
         Assert.Equal("tool accepted", first.Text);
         Assert.Equal(1, first.Context.Turn);
@@ -64,11 +68,43 @@ public sealed class InferenceSpineEndToEndTests
         Assert.Equal(1, tools.ExecutionCount);
         Assert.Equal(2, provider.InvocationCount);
 
-        var second = await runtime.ExecuteTurnAsync(
-            "wraith1", started.Run.RunId, "Continue.", CancellationToken.None);
+        ShellReplacementResult replacement;
+        TurnResult second;
+        RunEndResult completedRun;
+        using (var replacementRuntime = new InferenceRuntime(
+            new JsonDeckStateStore(temporaryDirectory.Path),
+            new JsonInferenceStateStore(temporaryDirectory.Path),
+            new JsonlAgentArchive(temporaryDirectory.Path),
+            new GitCheckpointStore(temporaryDirectory.Path),
+            new ModelProviderRegistry([provider]),
+            tools,
+            new FixedClock(),
+            defaultToolElisionTurns: 0))
+        {
+            replacement = await replacementRuntime.ReplaceShellAsync(
+                "wraith1",
+                started.Run.RunId,
+                "fake",
+                "replacement-model",
+                "context-window-replaced",
+                CancellationToken.None);
+            second = await replacementRuntime.ExecuteTurnAsync(
+                "wraith1", started.Run.RunId, "Continue.", CancellationToken.None);
+            completedRun = await replacementRuntime.CompleteRunAsync(
+                "wraith1",
+                started.Run.RunId,
+                "objective-achieved",
+                CancellationToken.None);
+        }
 
         Assert.Equal("second turn", second.Text);
         Assert.Equal(2, second.Context.Turn);
+        Assert.Equal(2, replacement.Run.Shells.Count);
+        Assert.Equal("context-window-replaced", replacement.PreviousShell.EndReason);
+        Assert.NotNull(replacement.PreviousShell.EndedAt);
+        Assert.Equal("replacement-model", replacement.CurrentShell.Model);
+        Assert.Equal(RunStatus.Completed, completedRun.Run.Status);
+        Assert.NotNull(completedRun.Shell.EndedAt);
         var marker = Assert.Single(
             second.Context.Items, item => item.Kind is ContextItemKind.ToolElision);
         Assert.Null(marker.Input);
@@ -82,10 +118,78 @@ public sealed class InferenceSpineEndToEndTests
         Assert.Equal(toolStarted.EventId, marker.OperationId);
         Assert.True(toolCompleted.Payload.GetProperty("output").GetProperty("accepted").GetBoolean());
         Assert.Contains(records, record => record.Kind == "context.tools-elided");
+        Assert.Equal(2, records.Count(record => record.Kind == "shell.started"));
+        Assert.Equal(2, records.Count(record => record.Kind == "shell.ended"));
+        var shellEnded = Assert.Single(records, record =>
+            record.Kind == "shell.ended" &&
+            record.ShellId == replacement.PreviousShell.ShellId);
+        Assert.Equal(replacement.PreviousShell.ShellId, shellEnded.ShellId);
+        Assert.Single(records, record => record.Kind == "run.completed");
+        Assert.Contains(records, record =>
+            record.Kind == "message.assistant" &&
+            record.ShellId == replacement.CurrentShell.ShellId);
 
         var persisted = await inferenceState.ReadContextAsync(
             Deckwraith.Core.Naming.CanonicalName.Parse("wraith1"), CancellationToken.None);
         Assert.Equal(CanonicalJson.Hash(second.Context), CanonicalJson.Hash(persisted));
+        var rebuilt = ContextArchiveRebuilder.Rebuild(
+            Deckwraith.Core.Naming.CanonicalName.Parse("wraith1"),
+            records,
+            second.Context.IdentityHash,
+            second.Context.ToolElisionTurns,
+            new FixedClock().UtcNow);
+        Assert.Equal(CanonicalJson.Hash(second.Context), CanonicalJson.Hash(rebuilt));
+        Assert.Equal(string.Empty, await StateSpineEndToEndTests.RunGitForTestsAsync(
+            temporaryDirectory.Path, ["status", "--porcelain"], CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task ProviderFailureClosesModelShellAndRunLifecycles()
+    {
+        using var temporaryDirectory = new TemporaryDirectory();
+        var deckState = new JsonDeckStateStore(temporaryDirectory.Path);
+        var inferenceState = new JsonInferenceStateStore(temporaryDirectory.Path);
+        var archive = new JsonlAgentArchive(temporaryDirectory.Path);
+        var checkpoints = new GitCheckpointStore(temporaryDirectory.Path);
+        using (var stateSpine = new StateSpine(
+            deckState,
+            archive,
+            new ContentAddressedArtifactStore(temporaryDirectory.Path),
+            checkpoints,
+            new FixedClock()))
+        {
+            await stateSpine.InitializeAsync(CancellationToken.None);
+            await stateSpine.CreateWraithAsync("wraith1", CancellationToken.None);
+        }
+
+        using var runtime = new InferenceRuntime(
+            deckState,
+            inferenceState,
+            archive,
+            checkpoints,
+            new ModelProviderRegistry([new FailingProvider()]),
+            clock: new FixedClock());
+        var started = await runtime.StartRunAsync(
+            "wraith1", null, "Exercise failure", "failing", "test-model");
+
+        await Assert.ThrowsAsync<ModelInvocationException>(() => runtime.ExecuteTurnAsync(
+            "wraith1", started.Run.RunId, "Fail now."));
+
+        var records = await archive.ReadAllAsync(
+            Deckwraith.Core.Naming.CanonicalName.Parse("wraith1"), CancellationToken.None);
+        var modelStarted = Assert.Single(records, record => record.Kind == "model.started");
+        var modelFailed = Assert.Single(records, record => record.Kind == "model.failed");
+        Assert.Equal(
+            modelStarted.EventId,
+            modelFailed.Payload.GetProperty("operationId").GetString());
+        Assert.Single(records, record => record.Kind == "shell.ended");
+        Assert.Single(records, record => record.Kind == "run.failed");
+        var failedRun = await inferenceState.ReadRunAsync(
+            Deckwraith.Core.Naming.CanonicalName.Parse("wraith1"),
+            started.Run.RunId,
+            CancellationToken.None);
+        Assert.Equal(RunStatus.Failed, failedRun.Status);
+        Assert.NotNull(failedRun.Shells[^1].EndedAt);
         Assert.Equal(string.Empty, await StateSpineEndToEndTests.RunGitForTestsAsync(
             temporaryDirectory.Path, ["status", "--porcelain"], CancellationToken.None));
     }
@@ -127,12 +231,32 @@ public sealed class InferenceSpineEndToEndTests
             }
             else
             {
+                Assert.Equal("replacement-model", request.Model);
                 Assert.Contains(request.Context.Items, item => item.Kind is ContextItemKind.ToolElision);
                 yield return new ModelTextDelta("second turn");
                 yield return new ModelResponseCompleted(ModelFinishReason.Stop, null);
             }
 
             await Task.CompletedTask;
+        }
+    }
+
+    private sealed class FailingProvider : IModelProvider
+    {
+        public string ProviderId => "failing";
+
+        public ProviderCapabilities Capabilities { get; } = new(
+            true, false, false, false, false);
+
+        public async IAsyncEnumerable<ModelEvent> RunAsync(
+            ModelRequest request,
+            [EnumeratorCancellation] CancellationToken cancellationToken)
+        {
+            await Task.Yield();
+            cancellationToken.ThrowIfCancellationRequested();
+            yield return new ModelResponseStarted("failed-request");
+            yield return new ModelProviderError(
+                "intentional-failure", "provider failed intentionally", false);
         }
     }
 
