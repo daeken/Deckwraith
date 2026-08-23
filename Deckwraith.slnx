@@ -1,0 +1,13 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Deckwraith.Application/Deckwraith.Application.csproj" />
+    <Project Path="src/Deckwraith.Core/Deckwraith.Core.csproj" />
+    <Project Path="src/Deckwraith.Headless/Deckwraith.Headless.csproj" />
+    <Project Path="src/Deckwraith.Persistence/Deckwraith.Persistence.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Deckwraith.Core.Tests/Deckwraith.Core.Tests.csproj" />
+    <Project Path="tests/Deckwraith.IntegrationTests/Deckwraith.IntegrationTests.csproj" />
+    <Project Path="tests/Deckwraith.Persistence.Tests/Deckwraith.Persistence.Tests.csproj" />
+  </Folder>
+</Solution>

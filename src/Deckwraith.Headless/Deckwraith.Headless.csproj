@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../Deckwraith.Application/Deckwraith.Application.csproj" />
+    <ProjectReference Include="../Deckwraith.Persistence/Deckwraith.Persistence.csproj" />
+  </ItemGroup>
+</Project>
