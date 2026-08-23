@@ -32,7 +32,7 @@ Codex app-server protocol. It explicitly selects Codex's built-in `openai` provi
 provider-owned tool use at the Deckwraith boundary, and has a live subscription smoke test in
 addition to deterministic notification and prompt-projection contract tests.
 
-## 3. PowerShell runtime
+## 3. PowerShell runtime — implemented
 
 Give each awake wraith an object-native, disposable working environment.
 
@@ -43,6 +43,11 @@ Give each awake wraith an object-native, disposable working environment.
 - Replace lost runspaces cold, explicitly reporting volatile-state loss and never replaying commands.
 
 Acceptance: a runspace-loss test proves ordinary variables disappear, durable values survive, tool assignments refresh, and no prior pipeline executes again.
+
+The runtime uses full-language `InitialSessionState` runspaces, compiled object-native state and
+discovery commands, strict portable-value conversion, and atomic candidate-runspace swaps for
+authored tool reload. Failed reloads retain the previous known-good command set and emit durable
+diagnostics; successful replacement records an explicit no-replay lifecycle event.
 
 ## 4. Linear deckbooks
 

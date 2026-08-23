@@ -1,9 +1,12 @@
 ﻿using System.Text.Json;
 using Deckwraith.Application.Inference;
+using Deckwraith.Application.State;
 using Deckwraith.Persistence;
 using Deckwraith.Persistence.Archives;
 using Deckwraith.Persistence.Git;
 using Deckwraith.Persistence.State;
+using Deckwraith.PowerShell.Hosting;
+using Deckwraith.PowerShell.Serialization;
 using Deckwraith.Providers.OpenAI;
 
 using var shutdown = new CancellationTokenSource();
@@ -75,6 +78,8 @@ internal static class DeckwraithCli
                     await ExecuteTurnAsync(rootPath, arguments, cancellationToken).ConfigureAwait(false),
                 "run-openai" when arguments.Length == 7 =>
                     await RunOpenAiAsync(rootPath, arguments, cancellationToken).ConfigureAwait(false),
+                "powershell" when arguments.Length == 6 =>
+                    await RunPowerShellAsync(rootPath, arguments, cancellationToken).ConfigureAwait(false),
                 _ => throw new ArgumentException($"Unknown command or invalid arguments: '{command}'."),
             };
 
@@ -164,6 +169,42 @@ internal static class DeckwraithCli
             new ModelProviderRegistry([provider]));
     }
 
+    private static async Task<object> RunPowerShellAsync(
+        string rootPath,
+        string[] arguments,
+        CancellationToken cancellationToken)
+    {
+        var deckState = new JsonDeckStateStore(rootPath);
+        var archive = new JsonlAgentArchive(rootPath);
+        var checkpoints = new GitCheckpointStore(rootPath);
+        var durableState = new DurableStateRuntime(
+            deckState,
+            new JsonDurableValueStore(rootPath),
+            archive,
+            checkpoints);
+        using var manager = new PowerShellRuntimeManager(
+            rootPath, durableState, archive, checkpoints);
+        var result = await manager.ExecuteAsync(
+            new PowerShellInvocationContext(
+                arguments[2],
+                arguments[3] == "-" ? null : arguments[3],
+                ParseOptionalHaunt(arguments[4])),
+            arguments[5],
+            cancellationToken).ConfigureAwait(false);
+        return new
+        {
+            output = result.Output.Select(PortablePowerShellValue.ToJsonElement).ToArray(),
+            errors = result.Errors.Select(error => new
+            {
+                error.FullyQualifiedErrorId,
+                message = error.ToString(),
+                category = error.CategoryInfo.Category.ToString(),
+            }).ToArray(),
+            result.Runtime,
+            result.ToolsReloaded,
+        };
+    }
+
     private static string? ParseOptionalHaunt(string value) => value == "-" ? null : value;
 
     private static string ResolveCodexExecutable()
@@ -182,10 +223,12 @@ internal static class DeckwraithCli
     {
         Console.Error.WriteLine(
             "Usage: deckwraith <init|create-wraith|create-haunt|rename-wraith|rename-haunt|" +
-            "resolve-wraith|resolve-haunt|identity|archive|store-artifact|start-run|turn|run-openai> " +
+            "resolve-wraith|resolve-haunt|identity|archive|store-artifact|start-run|turn|run-openai|" +
+            "powershell> " +
             "<deck-path> [arguments]\n" +
             "  start-run <deck> <wraith> <haunt|-> <model> <objective>\n" +
             "  turn <deck> <wraith> <run-id> <message>\n" +
-            "  run-openai <deck> <wraith> <haunt|-> <model> <objective> <message>");
+            "  run-openai <deck> <wraith> <haunt|-> <model> <objective> <message>\n" +
+            "  powershell <deck> <wraith> <run|-> <haunt|-> <script>");
     }
 }
