@@ -175,16 +175,73 @@ public sealed class DeckbookRuntimeTests
                 Synopsis: "current work"));
 
         var projection = await environment.Runtime.CompileContextAsync(
-            "wraith1", "deckwraith", "active", precedingWindow: 1, maximumCharacters: 800);
+            "wraith1", "deckwraith", "active", precedingWindow: 1, maximumCharacters: 1_200);
         var repeated = await environment.Runtime.CompileContextAsync(
-            "wraith1", "deckwraith", "active", precedingWindow: 1, maximumCharacters: 800);
+            "wraith1", "deckwraith", "active", precedingWindow: 1, maximumCharacters: 1_200);
 
         Assert.Equal(["pinned", "previous", "active"], projection.IncludedCells.Select(cell => cell.Name));
         Assert.DoesNotContain(projection.IncludedCells, cell => cell.Name == "unrelated");
         Assert.Contains(projection.Index, cell => cell.Name == "unrelated");
-        Assert.True(projection.IncludedCells.Sum(cell => cell.Source.Length) < 800);
+        Assert.True(CanonicalJson.Serialize(projection).Length <= 1_200);
         Assert.Equal(projection.ProjectionHash, repeated.ProjectionHash);
         Assert.Equal(0, environment.Kernel.InvocationCount);
+        Assert.Equal(string.Empty, await RunGitAsync(
+            environment.Path, ["status", "--porcelain"]));
+    }
+
+    [Fact]
+    public async Task ContextPolicyCanPinAndUnpinWithoutExecutingCells()
+    {
+        using var environment = await TestEnvironment.CreateAsync();
+        await environment.Runtime.InsertAsync(
+            "wraith1",
+            "deckwraith",
+            new InsertDeckbookCell(
+                "mutable-pin",
+                DeckbookCellKind.Code,
+                "'never executed'",
+                "powershell"));
+
+        var unpinned = await environment.Runtime.CompileContextAsync(
+            "wraith1", "deckwraith", activeCell: null);
+        Assert.DoesNotContain(unpinned.IncludedCells, cell => cell.Name == "mutable-pin");
+
+        var pinnedSnapshot = await environment.Runtime.SetContextPolicyAsync(
+            "wraith1", "deckwraith", "mutable-pin", CellContextPolicy.Pinned);
+        Assert.Equal(CellContextPolicy.Pinned, Cell(pinnedSnapshot, "mutable-pin").Cell.ContextPolicy);
+        var pinned = await environment.Runtime.CompileContextAsync(
+            "wraith1", "deckwraith", activeCell: null);
+        Assert.Contains(pinned.IncludedCells, cell => cell.Name == "mutable-pin");
+
+        var unpinnedSnapshot = await environment.Runtime.SetContextPolicyAsync(
+            "wraith1", "deckwraith", "mutable-pin", CellContextPolicy.Never);
+        Assert.Equal(CellContextPolicy.Never, Cell(unpinnedSnapshot, "mutable-pin").Cell.ContextPolicy);
+        var removed = await environment.Runtime.CompileContextAsync(
+            "wraith1", "deckwraith", activeCell: null);
+        Assert.DoesNotContain(removed.IncludedCells, cell => cell.Name == "mutable-pin");
+        Assert.Equal(0, environment.Kernel.InvocationCount);
+    }
+
+    [Fact]
+    public async Task ReadingAndCompilingAnEmptyDeckbookDoesNotCreateState()
+    {
+        using var environment = await TestEnvironment.CreateAsync();
+        var snapshot = await environment.Runtime.GetAsync("wraith1", "deckwraith");
+        var projection = await environment.Runtime.CompileContextAsync(
+            "wraith1", "deckwraith", activeCell: null);
+        var repeated = await environment.Runtime.CompileContextAsync(
+            "wraith1", "deckwraith", activeCell: null);
+
+        Assert.Empty(snapshot.Cells);
+        Assert.Empty(projection.IncludedCells);
+        Assert.Empty(projection.Index);
+        Assert.Equal(projection.ProjectionHash, repeated.ProjectionHash);
+        Assert.False(Directory.Exists(System.IO.Path.Combine(
+            environment.Path,
+            "agents",
+            "wraith1",
+            "deckbooks",
+            "deckwraith")));
         Assert.Equal(string.Empty, await RunGitAsync(
             environment.Path, ["status", "--porcelain"]));
     }

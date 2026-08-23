@@ -63,16 +63,7 @@ public sealed class DeckbookRuntime : IDisposable
         {
             if (!_store.Exists(address.Wraith, address.Haunt))
             {
-                return new DeckbookSnapshot(
-                    new DeckbookDocument(
-                        DeckbookDocument.CurrentSchemaVersion,
-                        address.Wraith.Value,
-                        address.Haunt.Value,
-                        0,
-                        new Dictionary<string, string>(StringComparer.Ordinal),
-                        [],
-                        _clock.UtcNow),
-                    []);
+                return new DeckbookSnapshot(EmptyDeckbook(address), []);
             }
 
             var deckbook = await _store.EnsureAsync(
@@ -475,7 +466,9 @@ public sealed class DeckbookRuntime : IDisposable
         await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            var state = await LoadStateAsync(address, cancellationToken).ConfigureAwait(false);
+            var state = _store.Exists(address.Wraith, address.Haunt)
+                ? await LoadStateAsync(address, cancellationToken).ConfigureAwait(false)
+                : new LoadedState(EmptyDeckbook(address), []);
             var canonicalActive = activeCell is null
                 ? null
                 : ResolveCellName(state.Deckbook, state.Cells, activeCell);
@@ -499,64 +492,85 @@ public sealed class DeckbookRuntime : IDisposable
                 Truncate(cell.Synopsis, 160),
                 cell.IsStale,
                 cell.LastExecution?.Status)).ToArray();
-            var remaining = Math.Max(
-                0,
-                maximumCharacters - indexEntries.Sum(entry =>
-                    entry.Name.Length + (entry.Synopsis?.Length ?? 0) + 32));
             var included = new List<DeckbookContextCell>();
+            var candidates = new List<(string Source, DeckbookOutputDocument? Output)>();
             foreach (var cell in state.Cells.Where(cell => selected.Contains(cell.Name)))
             {
                 var source = await _store.ReadSourceAsync(
                     address.Wraith, address.Haunt, cell, cancellationToken).ConfigureAwait(false);
-                var boundedSource = Truncate(source, remaining) ?? string.Empty;
-                remaining -= boundedSource.Length;
                 var output = await _store.ReadOutputAsync(
                     address.Wraith,
                     address.Haunt,
                     cell.LastExecution?.OutputHash,
                     cancellationToken).ConfigureAwait(false);
-                if (output is not null)
-                {
-                    var outputLength = CanonicalJson.Serialize(output).Length;
-                    if (outputLength > remaining)
-                    {
-                        output = null;
-                    }
-                    else
-                    {
-                        remaining -= outputLength;
-                    }
-                }
-
                 included.Add(new DeckbookContextCell(
                     cell.Name,
                     cell.Kind,
                     cell.Revision,
                     cell.IsStale,
-                    boundedSource,
+                    string.Empty,
                     cell.LastExecution?.OutputHash,
-                    output));
+                    null));
+                candidates.Add((source, output));
             }
 
-            var unsigned = new
+            var projection = BuildProjection(
+                address, state.Deckbook, canonicalActive, included, indexEntries);
+            var minimumLength = CanonicalJson.Serialize(projection).Length;
+            if (minimumLength > maximumCharacters)
             {
-                SchemaVersion = DeckbookContextProjection.CurrentSchemaVersion,
-                Agent = address.Wraith.Value,
-                Haunt = address.Haunt.Value,
-                DeckbookRevision = state.Deckbook.Revision,
-                ActiveCell = canonicalActive,
-                IncludedCells = included,
-                Index = indexEntries,
-            };
-            return new DeckbookContextProjection(
-                unsigned.SchemaVersion,
-                unsigned.Agent,
-                unsigned.Haunt,
-                unsigned.DeckbookRevision,
-                unsigned.ActiveCell,
-                included,
-                indexEntries,
-                CanonicalJson.Hash(unsigned));
+                throw new DeckStateException(
+                    $"The compact deckbook index requires {minimumLength} characters, " +
+                    $"which exceeds the {maximumCharacters}-character context limit.");
+            }
+
+            for (var index = 0; index < included.Count; index++)
+            {
+                var candidate = candidates[index];
+                var fullSource = included[index] with { Source = candidate.Source };
+                included[index] = FitsContext(
+                    address,
+                    state.Deckbook,
+                    canonicalActive,
+                    included,
+                    indexEntries,
+                    index,
+                    fullSource,
+                    maximumCharacters)
+                    ? fullSource
+                    : included[index] with
+                    {
+                        Source = FitSource(
+                            address,
+                            state.Deckbook,
+                            canonicalActive,
+                            included,
+                            indexEntries,
+                            index,
+                            candidate.Source,
+                            maximumCharacters),
+                    };
+
+                if (candidate.Output is not null)
+                {
+                    var withOutput = included[index] with { Output = candidate.Output };
+                    if (FitsContext(
+                        address,
+                        state.Deckbook,
+                        canonicalActive,
+                        included,
+                        indexEntries,
+                        index,
+                        withOutput,
+                        maximumCharacters))
+                    {
+                        included[index] = withOutput;
+                    }
+                }
+            }
+
+            return BuildProjection(
+                address, state.Deckbook, canonicalActive, included, indexEntries);
         }
         finally
         {
@@ -723,6 +737,107 @@ public sealed class DeckbookRuntime : IDisposable
             address.Wraith, address.Haunt, deckbook, cancellationToken).ConfigureAwait(false))
             .ToList();
         return new LoadedState(deckbook, cells);
+    }
+
+    private static DeckbookDocument EmptyDeckbook(Address address) => new(
+        DeckbookDocument.CurrentSchemaVersion,
+        address.Wraith.Value,
+        address.Haunt.Value,
+        0,
+        new Dictionary<string, string>(StringComparer.Ordinal),
+        [],
+        DateTimeOffset.UnixEpoch);
+
+    private static DeckbookContextProjection BuildProjection(
+        Address address,
+        DeckbookDocument deckbook,
+        string? activeCell,
+        IReadOnlyList<DeckbookContextCell> included,
+        IReadOnlyList<DeckbookContextIndexEntry> index)
+    {
+        var unsigned = new
+        {
+            SchemaVersion = DeckbookContextProjection.CurrentSchemaVersion,
+            Agent = address.Wraith.Value,
+            Haunt = address.Haunt.Value,
+            DeckbookRevision = deckbook.Revision,
+            ActiveCell = activeCell,
+            IncludedCells = included,
+            Index = index,
+        };
+        return new DeckbookContextProjection(
+            unsigned.SchemaVersion,
+            unsigned.Agent,
+            unsigned.Haunt,
+            unsigned.DeckbookRevision,
+            unsigned.ActiveCell,
+            included,
+            index,
+            CanonicalJson.Hash(unsigned));
+    }
+
+    private static bool FitsContext(
+        Address address,
+        DeckbookDocument deckbook,
+        string? activeCell,
+        List<DeckbookContextCell> included,
+        IReadOnlyList<DeckbookContextIndexEntry> index,
+        int candidateIndex,
+        DeckbookContextCell candidate,
+        int maximumCharacters)
+    {
+        var previous = included[candidateIndex];
+        included[candidateIndex] = candidate;
+        try
+        {
+            return CanonicalJson.Serialize(
+                BuildProjection(address, deckbook, activeCell, included, index)).Length <=
+                maximumCharacters;
+        }
+        finally
+        {
+            included[candidateIndex] = previous;
+        }
+    }
+
+    private static string FitSource(
+        Address address,
+        DeckbookDocument deckbook,
+        string? activeCell,
+        List<DeckbookContextCell> included,
+        IReadOnlyList<DeckbookContextIndexEntry> index,
+        int candidateIndex,
+        string source,
+        int maximumCharacters)
+    {
+        var lower = 0;
+        var upper = source.Length;
+        while (lower < upper)
+        {
+            var midpoint = lower + ((upper - lower + 1) / 2);
+            var candidate = included[candidateIndex] with
+            {
+                Source = Truncate(source, midpoint) ?? string.Empty,
+            };
+            if (FitsContext(
+                address,
+                deckbook,
+                activeCell,
+                included,
+                index,
+                candidateIndex,
+                candidate,
+                maximumCharacters))
+            {
+                lower = midpoint;
+            }
+            else
+            {
+                upper = midpoint - 1;
+            }
+        }
+
+        return Truncate(source, lower) ?? string.Empty;
     }
 
     private async Task<DeckbookSnapshot> ReadSnapshotAsync(
