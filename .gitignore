@@ -7,3 +7,9 @@ TestResults/
 *.user
 *.suo
 .DS_Store
+artifacts/
+ui/dist/
+ui/node_modules/
+ui/*.tsbuildinfo
+src/Deckwraith.Desktop/wwwroot/
+src/Deckwraith.Desktop/ElectronHostHook/

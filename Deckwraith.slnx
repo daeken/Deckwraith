@@ -3,6 +3,7 @@
     <Project Path="src/Deckwraith.Application/Deckwraith.Application.csproj" />
     <Project Path="src/Deckwraith.Continuity/Deckwraith.Continuity.csproj" />
     <Project Path="src/Deckwraith.Core/Deckwraith.Core.csproj" />
+    <Project Path="src/Deckwraith.Desktop/Deckwraith.Desktop.csproj" />
     <Project Path="src/Deckwraith.Headless/Deckwraith.Headless.csproj" />
     <Project Path="src/Deckwraith.Hosting/Deckwraith.Hosting.csproj" />
     <Project Path="src/Deckwraith.Kernels.Abstractions/Deckwraith.Kernels.Abstractions.csproj" />
