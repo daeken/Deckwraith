@@ -63,7 +63,7 @@ public sealed class AtomicFileEditorTests
             new PowerShellInvocationContext("lumen", Haunt: "work"),
             """
             $result = Invoke-DwFileEdit -Operation @(
-                [pscustomobject]@{ path = 'note.txt'; kind = 'append'; text = 'from lumen' }
+                @{ path = 'note.txt'; kind = 'append'; text = 'from lumen' }
             ) -CommitSubject 'Continue the note' -CommitBody 'Use the haunt project by default.'
             [pscustomobject]@{
                 CommitId = $result.Commit.CommitId

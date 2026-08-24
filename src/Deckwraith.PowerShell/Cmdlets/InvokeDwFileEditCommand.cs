@@ -1,3 +1,4 @@
+using System.Collections;
 using System.Globalization;
 using System.Management.Automation;
 using System.Text.Json;
@@ -114,10 +115,10 @@ public sealed class InvokeDwFileEditCommand : DwCmdlet
                 $"Unknown file edit kind '{GetRequiredString(value, "kind")}'.");
         }
 
-        var valueProperty = FindProperty(value, "value");
-        JsonElement? jsonValue = valueProperty is null
+        var hasValue = TryGetValue(value, "value", out var operationValue);
+        JsonElement? jsonValue = !hasValue
             ? null
-            : PortablePowerShellValue.ToJsonElement(valueProperty.Value);
+            : PortablePowerShellValue.ToJsonElement(operationValue);
         return new AtomicFileEdit(
             path,
             kind,
@@ -131,9 +132,26 @@ public sealed class InvokeDwFileEditCommand : DwCmdlet
             ExpectedHash: GetString(value, "expectedHash"));
     }
 
-    private static PSPropertyInfo? FindProperty(PSObject value, string name) =>
-        value.Properties.FirstOrDefault(property =>
-            StringComparer.OrdinalIgnoreCase.Equals(property.Name, name));
+    private static bool TryGetValue(PSObject value, string name, out object? result)
+    {
+        if (value.BaseObject is IDictionary dictionary)
+        {
+            foreach (DictionaryEntry entry in dictionary)
+            {
+                if (StringComparer.OrdinalIgnoreCase.Equals(
+                    Convert.ToString(entry.Key, CultureInfo.InvariantCulture), name))
+                {
+                    result = entry.Value;
+                    return true;
+                }
+            }
+        }
+
+        var property = value.Properties.FirstOrDefault(candidate =>
+            StringComparer.OrdinalIgnoreCase.Equals(candidate.Name, name));
+        result = property?.Value;
+        return property is not null;
+    }
 
     private static string GetRequiredString(PSObject value, string name) =>
         GetString(value, name) is { Length: > 0 } result
@@ -143,23 +161,21 @@ public sealed class InvokeDwFileEditCommand : DwCmdlet
 
     private static string? GetString(PSObject value, string name)
     {
-        var property = FindProperty(value, name);
-        if (property is null || property.Value is null)
+        if (!TryGetValue(value, name, out var result) || result is null)
         {
             return null;
         }
 
-        return Convert.ToString(property.Value, CultureInfo.InvariantCulture);
+        return Convert.ToString(result, CultureInfo.InvariantCulture);
     }
 
     private static int? GetInt32(PSObject value, string name)
     {
-        var property = FindProperty(value, name);
-        if (property is null || property.Value is null)
+        if (!TryGetValue(value, name, out var result) || result is null)
         {
             return null;
         }
 
-        return LanguagePrimitives.ConvertTo<int>(property.Value);
+        return LanguagePrimitives.ConvertTo<int>(result);
     }
 }
