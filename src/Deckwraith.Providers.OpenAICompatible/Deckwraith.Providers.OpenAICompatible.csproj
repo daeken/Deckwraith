@@ -1,0 +1,6 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <ProjectReference Include="../Deckwraith.Providers.Abstractions/Deckwraith.Providers.Abstractions.csproj" />
+    <ProjectReference Include="../Deckwraith.Providers.Http/Deckwraith.Providers.Http.csproj" />
+  </ItemGroup>
+</Project>

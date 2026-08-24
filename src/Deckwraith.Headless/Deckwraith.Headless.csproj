@@ -15,6 +15,9 @@
     <ProjectReference Include="../Deckwraith.Notebooks/Deckwraith.Notebooks.csproj" />
     <ProjectReference Include="../Deckwraith.Persistence/Deckwraith.Persistence.csproj" />
     <ProjectReference Include="../Deckwraith.PowerShell/Deckwraith.PowerShell.csproj" />
+    <ProjectReference Include="../Deckwraith.Providers.Anthropic/Deckwraith.Providers.Anthropic.csproj" />
+    <ProjectReference Include="../Deckwraith.Providers.Google/Deckwraith.Providers.Google.csproj" />
     <ProjectReference Include="../Deckwraith.Providers.OpenAI/Deckwraith.Providers.OpenAI.csproj" />
+    <ProjectReference Include="../Deckwraith.Providers.OpenAICompatible/Deckwraith.Providers.OpenAICompatible.csproj" />
   </ItemGroup>
 </Project>

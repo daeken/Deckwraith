@@ -15,7 +15,11 @@ using Deckwraith.Persistence.Git;
 using Deckwraith.Persistence.State;
 using Deckwraith.PowerShell.Hosting;
 using Deckwraith.PowerShell.Serialization;
+using Deckwraith.Providers.Abstractions;
+using Deckwraith.Providers.Anthropic;
+using Deckwraith.Providers.Google;
 using Deckwraith.Providers.OpenAI;
+using Deckwraith.Providers.OpenAICompatible;
 
 using var shutdown = new CancellationTokenSource();
 Console.CancelKeyPress += (_, eventArgs) =>
@@ -80,13 +84,15 @@ internal static class DeckwraithCli
                     await state.ReadArchiveAsync(arguments[2], cancellationToken).ConfigureAwait(false),
                 "store-artifact" when arguments.Length is 5 or 6 =>
                     await StoreArtifactAsync(state, arguments, cancellationToken).ConfigureAwait(false),
-                "start-run" when arguments.Length == 6 =>
+                "start-run" when arguments.Length is 6 or 7 =>
                     await StartRunAsync(rootPath, arguments, cancellationToken).ConfigureAwait(false),
                 "turn" when arguments.Length == 5 =>
                     await ExecuteTurnAsync(rootPath, arguments, cancellationToken).ConfigureAwait(false),
                 "run-openai" when arguments.Length == 7 =>
                     await RunOpenAiAsync(rootPath, arguments, cancellationToken).ConfigureAwait(false),
-                "replace-shell" when arguments.Length == 6 =>
+                "run-provider" when arguments.Length == 8 =>
+                    await RunProviderAsync(rootPath, arguments, cancellationToken).ConfigureAwait(false),
+                "replace-shell" when arguments.Length is 6 or 7 =>
                     await ReplaceShellAsync(rootPath, arguments, cancellationToken).ConfigureAwait(false),
                 "complete-run" when arguments.Length == 5 =>
                     await EndRunAsync(rootPath, arguments, complete: true, cancellationToken)
@@ -120,7 +126,7 @@ internal static class DeckwraithCli
                 "mcp-catalog" when arguments.Length == 3 =>
                     await ReadMcpCatalogAsync(rootPath, arguments[2], cancellationToken)
                         .ConfigureAwait(false),
-                "compact" when arguments.Length is >= 4 and <= 6 =>
+                "compact" when arguments.Length is >= 5 and <= 7 =>
                     await CompactAsync(rootPath, arguments, cancellationToken)
                         .ConfigureAwait(false),
                 "recover" when arguments.Length == 3 =>
@@ -168,12 +174,17 @@ internal static class DeckwraithCli
         CancellationToken cancellationToken)
     {
         using var runtime = CreateInferenceRuntime(rootPath);
+        var provider = arguments.Length == 7
+            ? arguments[4]
+            : "openai-codex-subscription";
+        var model = arguments.Length == 7 ? arguments[5] : arguments[4];
+        var objective = arguments.Length == 7 ? arguments[6] : arguments[5];
         return await runtime.StartRunAsync(
             arguments[2],
             ParseOptionalHaunt(arguments[3]),
-            arguments[5],
-            "openai-codex-subscription",
-            arguments[4],
+            objective,
+            provider,
+            model,
             cancellationToken).ConfigureAwait(false);
     }
 
@@ -205,11 +216,26 @@ internal static class DeckwraithCli
         return new { started, turn };
     }
 
+    private static async Task<object> RunProviderAsync(
+        string rootPath,
+        string[] arguments,
+        CancellationToken cancellationToken)
+    {
+        using var runtime = CreateInferenceRuntime(rootPath);
+        var started = await runtime.StartRunAsync(
+            arguments[2],
+            ParseOptionalHaunt(arguments[3]),
+            arguments[6],
+            arguments[4],
+            arguments[5],
+            cancellationToken).ConfigureAwait(false);
+        var turn = await runtime.ExecuteTurnAsync(
+            arguments[2], started.Run.RunId, arguments[7], cancellationToken).ConfigureAwait(false);
+        return new { started, turn };
+    }
+
     private static InferenceRuntime CreateInferenceRuntime(string rootPath)
     {
-        var provider = new CodexAppServerProvider(new CodexAppServerProviderOptions(
-            ResolveCodexExecutable(),
-            Path.GetTempPath()));
         var deckState = new JsonDeckStateStore(rootPath);
         var archive = new JsonlAgentArchive(rootPath);
         var checkpoints = new GitCheckpointStore(rootPath);
@@ -237,7 +263,7 @@ internal static class DeckwraithCli
             new JsonInferenceStateStore(rootPath),
             archive,
             checkpoints,
-            new ModelProviderRegistry([provider]),
+            CreateProviderRegistry(),
             tools);
     }
 
@@ -247,12 +273,17 @@ internal static class DeckwraithCli
         CancellationToken cancellationToken)
     {
         using var runtime = CreateInferenceRuntime(rootPath);
+        var provider = arguments.Length == 7
+            ? arguments[4]
+            : "openai-codex-subscription";
+        var model = arguments.Length == 7 ? arguments[5] : arguments[4];
+        var reason = arguments.Length == 7 ? arguments[6] : arguments[5];
         return await runtime.ReplaceShellAsync(
             arguments[2],
             arguments[3],
-            "openai-codex-subscription",
-            arguments[4],
-            arguments[5],
+            provider,
+            model,
+            reason,
             cancellationToken).ConfigureAwait(false);
     }
 
@@ -449,26 +480,23 @@ internal static class DeckwraithCli
         string[] arguments,
         CancellationToken cancellationToken)
     {
-        var provider = new CodexAppServerProvider(new CodexAppServerProviderOptions(
-            ResolveCodexExecutable(),
-            Path.GetTempPath()));
         var runtime = new CompactionRuntime(
             new JsonDeckStateStore(rootPath),
             new JsonInferenceStateStore(rootPath),
             new JsonlAgentArchive(rootPath),
             new JsonCompactionStore(rootPath),
             new GitCheckpointStore(rootPath),
-            new ModelProviderRegistry([provider]));
-        var fraction = arguments.Length >= 5
-            ? double.Parse(arguments[4], System.Globalization.CultureInfo.InvariantCulture)
+            CreateProviderRegistry());
+        var fraction = arguments.Length >= 6
+            ? double.Parse(arguments[5], System.Globalization.CultureInfo.InvariantCulture)
             : 0.25;
-        var minimumRecords = arguments.Length == 6
-            ? int.Parse(arguments[5], System.Globalization.CultureInfo.InvariantCulture)
+        var minimumRecords = arguments.Length == 7
+            ? int.Parse(arguments[6], System.Globalization.CultureInfo.InvariantCulture)
             : 8;
         var result = await runtime.CompactAsync(
             arguments[2],
-            provider.ProviderId,
             arguments[3],
+            arguments[4],
             fraction,
             minimumRecords,
             cancellationToken).ConfigureAwait(false);
@@ -519,6 +547,27 @@ internal static class DeckwraithCli
 
     private static string? ParseOptionalHaunt(string value) => value == "-" ? null : value;
 
+    private static ModelProviderRegistry CreateProviderRegistry() => new(
+    [
+        new CodexAppServerProvider(new CodexAppServerProviderOptions(
+            ResolveCodexExecutable(),
+            Path.GetTempPath())),
+        new AnthropicProvider(new AnthropicProviderOptions(
+            ReadUriEnvironment("DECKWRAITH_ANTHROPIC_BASE_URL", "https://api.anthropic.com/"))),
+        new GoogleGeminiProvider(new GoogleGeminiProviderOptions(
+            ReadUriEnvironment(
+                "DECKWRAITH_GOOGLE_BASE_URL",
+                "https://generativelanguage.googleapis.com/"))),
+        new OpenAICompatibleProvider(new OpenAICompatibleProviderOptions(
+            ReadUriEnvironment("DECKWRAITH_OPENAI_BASE_URL", "https://api.openai.com/"))),
+    ]);
+
+    private static Uri ReadUriEnvironment(string name, string fallback)
+    {
+        var configured = Environment.GetEnvironmentVariable(name);
+        return new Uri(string.IsNullOrWhiteSpace(configured) ? fallback : configured);
+    }
+
     private static string ResolveCodexExecutable()
     {
         var configured = Environment.GetEnvironmentVariable("DECKWRAITH_CODEX_PATH");
@@ -535,16 +584,17 @@ internal static class DeckwraithCli
     {
         Console.Error.WriteLine(
             "Usage: deckwraith <init|create-wraith|create-haunt|rename-wraith|rename-haunt|" +
-            "resolve-wraith|resolve-haunt|identity|archive|store-artifact|start-run|turn|run-openai|" +
+            "resolve-wraith|resolve-haunt|identity|archive|store-artifact|start-run|turn|run-openai|run-provider|" +
             "replace-shell|complete-run|cancel-run|" +
             "powershell|deckbook|add-cell|run-cell|run-remaining|deckbook-context|" +
             "mcp-servers|mcp-assign-global|mcp-assign-wraith|mcp-catalog|" +
             "compact|recover|reverse> " +
             "<deck-path> [arguments]\n" +
-            "  start-run <deck> <wraith> <haunt|-> <model> <objective>\n" +
+            "  start-run <deck> <wraith> <haunt|-> [provider] <model> <objective>\n" +
             "  turn <deck> <wraith> <run-id> <message>\n" +
             "  run-openai <deck> <wraith> <haunt|-> <model> <objective> <message>\n" +
-            "  replace-shell <deck> <wraith> <run-id> <model> <reason>\n" +
+            "  run-provider <deck> <wraith> <haunt|-> <provider> <model> <objective> <message>\n" +
+            "  replace-shell <deck> <wraith> <run-id> [provider] <model> <reason>\n" +
             "  complete-run <deck> <wraith> <run-id> <reason>\n" +
             "  cancel-run <deck> <wraith> <run-id> <reason>\n" +
             "  powershell <deck> <wraith> <run|-> <haunt|-> <script>\n" +
@@ -557,7 +607,7 @@ internal static class DeckwraithCli
             "  mcp-assign-global <deck> <assignment-json>\n" +
             "  mcp-assign-wraith <deck> <wraith> <assignment-json>\n" +
             "  mcp-catalog <deck> <wraith>\n" +
-            "  compact <deck> <wraith> <model> [fraction] [minimum-records]\n" +
+            "  compact <deck> <wraith> <provider> <model> [fraction] [minimum-records]\n" +
             "  recover <deck> <wraith>\n" +
             "  reverse <deck> <commit>");
     }

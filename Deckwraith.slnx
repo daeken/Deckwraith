@@ -12,7 +12,11 @@
     <Project Path="src/Deckwraith.Persistence/Deckwraith.Persistence.csproj" />
     <Project Path="src/Deckwraith.PowerShell/Deckwraith.PowerShell.csproj" />
     <Project Path="src/Deckwraith.Providers.Abstractions/Deckwraith.Providers.Abstractions.csproj" />
+    <Project Path="src/Deckwraith.Providers.Anthropic/Deckwraith.Providers.Anthropic.csproj" />
+    <Project Path="src/Deckwraith.Providers.Google/Deckwraith.Providers.Google.csproj" />
+    <Project Path="src/Deckwraith.Providers.Http/Deckwraith.Providers.Http.csproj" />
     <Project Path="src/Deckwraith.Providers.OpenAI/Deckwraith.Providers.OpenAI.csproj" />
+    <Project Path="src/Deckwraith.Providers.OpenAICompatible/Deckwraith.Providers.OpenAICompatible.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/Deckwraith.Continuity.Tests/Deckwraith.Continuity.Tests.csproj" />

@@ -9,7 +9,10 @@
     <PackageReference Include="xunit.runner.visualstudio" />
   </ItemGroup>
   <ItemGroup>
+    <ProjectReference Include="../../src/Deckwraith.Providers.Anthropic/Deckwraith.Providers.Anthropic.csproj" />
+    <ProjectReference Include="../../src/Deckwraith.Providers.Google/Deckwraith.Providers.Google.csproj" />
     <ProjectReference Include="../../src/Deckwraith.Providers.OpenAI/Deckwraith.Providers.OpenAI.csproj" />
+    <ProjectReference Include="../../src/Deckwraith.Providers.OpenAICompatible/Deckwraith.Providers.OpenAICompatible.csproj" />
   </ItemGroup>
   <ItemGroup>
     <Using Include="Xunit" />
