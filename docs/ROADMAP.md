@@ -1,5 +1,8 @@
 # Delivery roadmap
 
+> The eight architecture milestones below are complete, but they are no longer the 1.0 product
+> gate. See [PRE-1.0.md](PRE-1.0.md) for the active dogfood requirements.
+
 The specification's eight vertical milestones are implemented and remain the release spine. Each
 ended in an independently usable, end-to-end tested repository. The v1 gate concluded with a live
 inside-out bootstrap through the ChatGPT-subscription provider.

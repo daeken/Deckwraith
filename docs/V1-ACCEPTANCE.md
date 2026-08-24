@@ -1,7 +1,10 @@
 # V1 acceptance ledger
 
-Status: v1.0.0 release gate complete
+Status: historical architecture milestone evidence
 Last verified: 2026-08-23
+
+This is not the current product-release gate. The active macOS dogfood and 1.0 requirements live in
+[PRE-1.0.md](PRE-1.0.md); release work is paused until that gate is complete.
 
 This ledger maps the architecture scenario in [SPEC.md](../SPEC.md#22-acceptance-criteria-for-the-architecture)
 to executable evidence. The scenario is intentionally composed from focused deterministic tests;
