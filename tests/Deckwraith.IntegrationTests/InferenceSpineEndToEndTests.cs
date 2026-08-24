@@ -247,6 +247,50 @@ public sealed class InferenceSpineEndToEndTests
             temporaryDirectory.Path, ["status", "--porcelain"], CancellationToken.None));
     }
 
+    [Fact]
+    public async Task ATerminalRunReopensTheSingleActiveRunSlot()
+    {
+        using var temporaryDirectory = new TemporaryDirectory();
+        var deckState = new JsonDeckStateStore(temporaryDirectory.Path);
+        var inferenceState = new JsonInferenceStateStore(temporaryDirectory.Path);
+        var archive = new JsonlAgentArchive(temporaryDirectory.Path);
+        var checkpoints = new GitCheckpointStore(temporaryDirectory.Path);
+        using (var state = new StateSpine(
+            deckState,
+            archive,
+            new ContentAddressedArtifactStore(temporaryDirectory.Path),
+            checkpoints,
+            new FixedClock()))
+        {
+            await state.InitializeAsync(CancellationToken.None);
+            await state.CreateWraithAsync("wraith1", CancellationToken.None);
+        }
+
+        using var runtime = new InferenceRuntime(
+            deckState,
+            inferenceState,
+            archive,
+            checkpoints,
+            new ModelProviderRegistry([new CapturingProvider()]),
+            clock: new FixedClock());
+        var first = await runtime.StartRunAsync(
+            "wraith1", null, "First objective", "capture", "test-model");
+
+        var conflict = await Assert.ThrowsAsync<Deckwraith.Core.State.DeckStateException>(() =>
+            runtime.StartRunAsync(
+                "wraith1", null, "Conflicting objective", "capture", "test-model"));
+        Assert.Contains(first.Run.RunId, conflict.Message, StringComparison.Ordinal);
+
+        await runtime.CompleteRunAsync(
+            "wraith1", first.Run.RunId, "first objective complete", CancellationToken.None);
+        var second = await runtime.StartRunAsync(
+            "wraith1", null, "Second objective", "capture", "test-model");
+
+        Assert.NotEqual(first.Run.RunId, second.Run.RunId);
+        Assert.Equal(string.Empty, await StateSpineEndToEndTests.RunGitForTestsAsync(
+            temporaryDirectory.Path, ["status", "--porcelain"], CancellationToken.None));
+    }
+
     private sealed class ScriptedProvider : IModelProvider
     {
         public string ProviderId => "fake";

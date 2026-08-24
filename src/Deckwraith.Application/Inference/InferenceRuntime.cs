@@ -98,6 +98,15 @@ public sealed class InferenceRuntime : IDisposable
         await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
+            var activeRun = (await _inferenceState.ListRunsAsync(agent, cancellationToken)
+                .ConfigureAwait(false)).FirstOrDefault(run =>
+                    run.Status is not (RunStatus.Completed or RunStatus.Cancelled or RunStatus.Failed));
+            if (activeRun is not null)
+            {
+                throw new DeckStateException(
+                    $"Wraith '{agent}' already has active run '{activeRun.RunId}'.");
+            }
+
             var resolvedHaunt = haunt is null
                 ? (CanonicalName?)null
                 : await _deckState.ResolveHauntAsync(
