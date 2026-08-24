@@ -5,8 +5,9 @@
   "type": "module",
   "scripts": {
     "build": "tsc -b && vite build",
+    "check:protocol": "node scripts/check-protocol.mjs",
     "dev": "vite",
-    "lint": "tsc -b --pretty false"
+    "lint": "tsc -b --pretty false && npm run check:protocol"
   },
   "dependencies": {
     "@radix-ui/react-dialog": "^1.1.15",

@@ -1,4 +1,5 @@
 import type { HostEvent } from "../state/types";
+import { HOST_PROTOCOL_VERSION } from "./protocol";
 
 type RequestKind = "command" | "query";
 
@@ -21,6 +22,21 @@ export class BridgeError extends Error {
   }
 }
 
+export async function assertProtocolCompatible(): Promise<void> {
+  const response = await fetch("/api/v1/status", { cache: "no-store" });
+  if (!response.ok) {
+    throw new BridgeError("transport", `Deckwraith host returned ${response.status}.`, true);
+  }
+
+  const status = (await response.json()) as { protocolVersion?: number };
+  if (status.protocolVersion !== HOST_PROTOCOL_VERSION) {
+    throw new BridgeError(
+      "unsupported-protocol",
+      `Renderer protocol ${HOST_PROTOCOL_VERSION} cannot use host protocol ${String(status.protocolVersion)}.`,
+    );
+  }
+}
+
 export async function request<T>(
   kind: RequestKind,
   name: string,
@@ -30,7 +46,7 @@ export async function request<T>(
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
-      protocolVersion: 1,
+      protocolVersion: HOST_PROTOCOL_VERSION,
       requestId: crypto.randomUUID(),
       kind,
       name,
@@ -41,6 +57,12 @@ export async function request<T>(
   if (!response.ok || !("success" in envelope)) {
     const failure = envelope as { code?: string; message?: string };
     throw new BridgeError(failure.code ?? "transport", failure.message ?? response.statusText);
+  }
+  if (envelope.protocolVersion !== HOST_PROTOCOL_VERSION) {
+    throw new BridgeError(
+      "unsupported-protocol",
+      `Host response protocol ${envelope.protocolVersion} does not match renderer protocol ${HOST_PROTOCOL_VERSION}.`,
+    );
   }
   if (!envelope.success) {
     throw new BridgeError(
@@ -73,6 +95,15 @@ export function subscribe(
     source = new EventSource(`/api/v1/events?after=${cursor}`);
     source.addEventListener("host", (raw) => {
       const event = JSON.parse((raw as MessageEvent).data) as HostEvent;
+      if (event.protocolVersion !== HOST_PROTOCOL_VERSION) {
+        source?.close();
+        source = null;
+        stopped = true;
+        throw new BridgeError(
+          "unsupported-protocol",
+          `Host event protocol ${event.protocolVersion} does not match renderer protocol ${HOST_PROTOCOL_VERSION}.`,
+        );
+      }
       cursor = event.cursor;
       onEvent(event);
     });

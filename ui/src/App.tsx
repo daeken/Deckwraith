@@ -3,7 +3,7 @@ import * as ScrollArea from "@radix-ui/react-scroll-area";
 import * as Tabs from "@radix-ui/react-tabs";
 import clsx from "clsx";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { BridgeError, command, query, subscribe } from "./ipc/bridge";
+import { assertProtocolCompatible, BridgeError, command, query, subscribe } from "./ipc/bridge";
 import type {
   ArchivePage,
   CheckpointSummary,
@@ -84,7 +84,9 @@ export function App() {
   }, [selectedHaunt, selectedWraith]);
 
   useEffect(() => {
-    void refresh();
+    void assertProtocolCompatible().then(refresh).catch((reason: unknown) => {
+      setError(messageOf(reason));
+    });
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
@@ -114,6 +116,9 @@ export function App() {
   }, [refresh]);
 
   if (initialized === null) {
+    if (error) {
+      return <CenteredState eyebrow="Host unavailable" title="Deckwraith cannot connect." detail={error} />;
+    }
     return <CenteredState eyebrow="Waking the deck" title="Rebuilding the durable view…" />;
   }
 
