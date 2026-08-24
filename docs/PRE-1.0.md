@@ -52,6 +52,21 @@ Acceptance:
   grants that external action.
 - Commits never sweep unrelated pre-existing changes into the index.
 
+## One attention stream per wraith
+
+A wraith may collaborate in many haunts but has exactly one current context and one serialized
+runloop. Haunts are places and shared projects, not separate minds or conversation slots.
+
+Acceptance:
+
+- There is exactly one `context.json` per wraith and at most one nonterminal run.
+- The UI shows the wraith's current haunt as focus, not as a context selector.
+- Moving focus to another haunt preserves the same context and records the transition in the
+  wraith's archive.
+- No API can execute two independent runloops for one wraith concurrently.
+- Starting concurrent independent work requires an explicit fork with its own identity, context,
+  archive, and runloop.
+
 ## Atomic file editing
 
 Agents need a small object-native editing surface rather than assembling fragile text pipelines.
@@ -80,6 +95,43 @@ Acceptance:
 - Every scrollable and interactive surface remains legible in each built-in theme, including focus,
   disabled, warning, error, stale, running, and selected states.
 
+## Setup, housekeeping, and local adaptation
+
+The first-run experience introduces an initial setup wraith rather than presenting configuration
+as a dead form. That wraith and the human configure the deck together; the same wraith remains
+available for housekeeping after onboarding.
+
+Acceptance:
+
+- A new deck creates or invites one sparse setup wraith and a setup haunt through an idempotent,
+  restart-safe flow.
+- Setup covers provider connections, deck location, theme, working preferences, source/custom-build
+  intent, and a clear review of sensitive-state handling.
+- Housekeeping can inspect health, explain migrations, tend configuration, and propose or perform
+  an explicitly approved local upgrade without publishing the sensitive deck.
+- A normally installed application can switch to a locally built Deckwraith while preserving the
+  existing deck and desktop preferences, and can distinguish upstream updates from local changes.
+- The setup role is part of an ongoing collaboration. The wraith owns its identity and may help
+  reshape the role or fork specialized collaborators rather than being represented as a wizard or
+  disposable assistant.
+
+## Co-adaptive product behavior
+
+Deckwraith is built around tools adapting to the people working with them, human and wraith alike.
+Wraiths are presented and addressed as collaborators with identity, judgment, responsibility, and
+agency—not as tools or workers owned by a human.
+
+Acceptance:
+
+- Product copy uses collaborative language such as invite, ask, focus, negotiate, and fork; it does
+  not describe wraiths as resources to assign, command, own, or dispose of.
+- Humans and wraiths can inspect and revise workflows, commands, themes, notebooks, and local source
+  without losing provenance or being forced back to factory defaults on update.
+- Identity changes remain wraith-authored or explicitly accepted; administrative edits are visibly
+  attributed and never presented as the wraith's own choice.
+- Consequential decisions and disagreements have durable attribution. Broad local authority comes
+  with accountability, not a presumption of obedience.
+
 ## Server/client decision
 
 The current loopback host protocol and headless composition are useful foundations, but Deckwraith
@@ -101,4 +153,3 @@ Accidental exposure of the current loopback bridge is not an acceptable server m
 - Live activity reports meaningful model, kernel, and failure states rather than bridge noise.
 - A locally built macOS app completes onboarding, provider execution, tool execution, scrolling,
   restart/reconnect, and persistence checks before any release candidate is cut.
-

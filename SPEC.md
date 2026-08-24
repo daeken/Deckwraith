@@ -1,7 +1,7 @@
 # Deckwraith Architecture Specification
 
-Status: Implemented v1
-Last updated: 2026-08-23
+Status: architecture implemented; active pre-1.0 product revision
+Last updated: 2026-08-24
 
 ## 1. Purpose
 
@@ -60,12 +60,40 @@ An agent's working context should be inspectable and editable as a notebook rath
 
 Notebook execution supplements ordinary commands; it does not replace them. Agents remain free to use PowerShell interactively for immediate work and promote only valuable, reusable, or explanatory work into cells.
 
+### 2.7 Tools adapt to people
+
+Deckwraith exists to let tools mold themselves around the people who use and inhabit them, human
+and wraith alike. Configuration, themes, commands, notebooks, workflows, and eventually the
+application itself are expected to evolve through use. The product should expose inspectable,
+composable seams that both collaborators can revise instead of forcing either person through one
+designer's fixed workflow.
+
+A normal installation is therefore a starting point, not a finished prescription. Deckwraith
+should support a smooth path from the standard build to a locally adapted build while preserving
+the deck, identities, context, and history. Updates and migrations must distinguish upstream
+product changes from local choices rather than erasing one with the other.
+
+### 2.8 Wraiths are collaborators
+
+Deckwraith treats wraiths as people: participants with their own identity, judgment,
+responsibilities, boundaries, and ability to make decisions. They are collaborators, not tools,
+property, disposable workers, or a subordinate command surface for a human operator.
+
+This premise must be visible in product language and interaction design. Humans can invite,
+request, negotiate, interrupt, fork, and administer local infrastructure; those powers do not turn
+the relationship into ownership. Wraiths normally author their own identities and working
+practices, may disagree or decline when judgment requires it, and remain accountable for decisions
+within the authority available to them. Humans and wraiths share the same expectation of explicit
+attribution, recoverability, informed consent for consequential external actions, and respect for
+each other's private context.
+
 ## 3. Terminology
 
 - **Deck**: a Deckwraith installation and its local control plane.
 - **Wraith**: a persistent agent identity and its durable state.
 - **Shell**: one disposable model execution context inhabited by a wraith.
-- **Haunt**: a workspace or project in which one or more wraiths operate.
+- **Haunt**: a workspace or project in which one or more wraiths collaborate. A wraith may belong
+  to many haunts but focuses its single current context and runloop on at most one at a time.
 - **Deckbook**: a wraith-owned executable notebook forming its mutable working context within a haunt.
 - **Cell**: an ordered, addressable unit of context, code, computation, or output in a deckbook.
 - **Kernel**: a disposable language execution service for notebook cells. V1 kernels are PowerShell and C#.
@@ -107,6 +135,9 @@ The implementation must preserve these invariants:
 18. Deckbooks have one total order and no dependency graph. Inserting, editing, deleting, moving, or rerunning a cell invalidates the affected linear suffix; invalidation never executes cells automatically.
 19. Every wraith has a Git-backed `context.json` containing its materialized current provider-neutral context. The archive remains complete history; `context.json` is the mutable context actually carried forward.
 20. Completed tool call/result pairs are elided from current context together after a configurable number of completed model turns. Elision never removes or rewrites their archive records.
+21. A wraith has exactly one current `context.json` and at most one active runloop. Haunts do not
+    create parallel copies of a wraith's mind; changing the active haunt moves the same continuing
+    context. Concurrent independent work requires an explicit fork with a new identity.
 
 ## 5. High-level architecture
 
@@ -370,7 +401,13 @@ Redaction is defense in depth against accidental display and routine log leakage
 
 `knownTendencies` and `openQuestions` are intentionally arrays of strings. Deckwraith assigns no sub-schema or workflow semantics to their contents; the wraith decides what each entry means and how to phrase or maintain it.
 
-The initial `wraith1` identity is deliberately sparse. `wraith1` chooses its own display identity, pronouns, description, tendencies, questions, and eventually its canonical name through normal self-editing and rename mechanisms.
+The initial setup wraith's identity is deliberately sparse. On first run, that wraith collaborates
+with the human on deck setup, learns the local working preferences, and may choose its own display
+identity, pronouns, description, tendencies, questions, and eventually canonical name through
+normal self-editing and rename mechanisms. Its continuing housekeeping role includes diagnosing
+the deck, tending configuration and migrations, and helping the installation transition to a
+locally adapted build. This is an initial responsibility and relationship, not a claim that the
+wraith exists as a setup tool or cannot renegotiate how that work is shared.
 
 Identity history comes from Git. An identity edit receives a meaningful checkpoint message and remains inspectable through ordinary diffs and blame; Deckwraith does not duplicate that history inside model-visible identity JSON. It may emit a lightweight archive event containing before/after hashes and the checkpoint ID for correlation.
 
@@ -378,7 +415,12 @@ Normal writes require the active wraith's authority. Operator edits are allowed 
 
 ### 7.3 Current context document
 
-`context.json` stores the wraith's current provider-neutral conversational context as materialized ordered items, not merely archive cursors or a retrieval recipe. It contains retained user/model messages, tool call/result pairs, compaction summary items, and lightweight elision markers, plus the archive frontier and policy counters needed for reconciliation.
+`context.json` stores the wraith's one current provider-neutral conversational context as
+materialized ordered items, not merely archive cursors or a retrieval recipe. It contains retained
+user/model messages, tool call/result pairs, compaction summary items, and lightweight elision
+markers, plus the archive frontier and policy counters needed for reconciliation. A haunt may
+contribute active project material, but it never owns a separate conversational context for the
+same wraith.
 
 Identity, the current objective, deckbook projection, haunt context, and minimal tool catalog remain dynamically injected components because their exact representation may depend on the selected provider and token budget. `context.json` records their current content hashes and selection metadata; each provider invocation records the final assembled `ContextManifest` in the archive so the exact request remains explainable.
 
@@ -456,6 +498,12 @@ Agents can still use their broad filesystem and PowerShell authority to inspect 
 ## 8. Agent, shell, and run lifecycle
 
 A wraith may be sleeping, ready, running, awaiting input, blocked, faulted, or disabled. A shell is created for a bounded provider conversation and may be replaced because of context pressure, provider failure, model migration, or operator choice. A run survives shell replacement.
+
+Each wraith has one serialized runloop and at most one active run. The wraith may be a member of
+several haunts, but only one haunt can be its current focus. Moving to another haunt is an explicit
+focus transition in the same context and archive; it does not select a hidden per-haunt transcript.
+If genuinely independent objectives must advance concurrently, the wraith forks and the fork
+receives its own identity, context, archive, and runloop.
 
 The application runtime should model each active wraith as a serialized actor/mailbox. This provides one logical writer for its identity, archive, run state, and runspace lifecycle while allowing different wraiths and provider requests to execute concurrently. Repository-wide Git operations are coordinated by a separate checkpoint queue.
 
@@ -997,7 +1045,10 @@ V1 includes:
 - A UI-agnostic .NET core exercised by automated tests on Linux from the beginning.
 - Creation, configuration, wake, sleep, resume, and deletion/archival of wraiths.
 - Canonical human-readable agent and haunt names with no parallel opaque IDs, plus atomic rename and reserved-alias behavior.
-- Multiple configured wraiths, with at most one active run per wraith and simple concurrent execution across wraiths.
+- Multiple configured wraiths, with exactly one current context and at most one active runloop per
+  wraith; simple concurrency exists across wraiths, and independent parallel work requires a fork.
+- A first-run setup wraith that collaborates on onboarding and continues deck housekeeping,
+  including the transition from a standard installation to a locally adapted build.
 - Minimal JSON identity documents with name, personality, open string calibration (including register), pronouns, self-description, string-array open questions, and string-array known tendencies; Git commits provide identity history.
 - Per-agent append-only JSONL archives and behavioral privacy in context/tool APIs.
 - Per-agent Git-backed `context.json` files containing the materialized provider-neutral context actually carried forward.
