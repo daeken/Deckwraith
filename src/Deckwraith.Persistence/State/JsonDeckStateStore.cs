@@ -219,6 +219,16 @@ public sealed class JsonDeckStateStore : IDeckStateStore
             .ConfigureAwait(false);
     }
 
+    public async Task<HauntDocument> ReadHauntAsync(
+        CanonicalName name,
+        CancellationToken cancellationToken)
+    {
+        var resolved = await ResolveHauntAsync(name, cancellationToken).ConfigureAwait(false);
+        return await AtomicJsonFile.ReadAsync<HauntDocument>(
+            Path.Combine(EntityPath("haunts", resolved), "haunt.json"), cancellationToken)
+            .ConfigureAwait(false);
+    }
+
     public async Task<IReadOnlyList<WraithDocument>> ListWraithsAsync(
         CancellationToken cancellationToken)
     {
@@ -253,6 +263,25 @@ public sealed class JsonDeckStateStore : IDeckStateStore
         }
 
         return documents.OrderBy(document => document.Name, StringComparer.Ordinal).ToArray();
+    }
+
+    public async Task<HauntDocument> WriteHauntProjectAsync(
+        CanonicalName name,
+        HauntProjectPolicy project,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(project);
+        var resolved = await ResolveHauntAsync(name, cancellationToken).ConfigureAwait(false);
+        var path = Path.Combine(EntityPath("haunts", resolved), "haunt.json");
+        var document = await AtomicJsonFile.ReadAsync<HauntDocument>(path, cancellationToken)
+            .ConfigureAwait(false);
+        var updated = document with
+        {
+            SchemaVersion = HauntDocument.CurrentSchemaVersion,
+            Project = project,
+        };
+        await AtomicJsonFile.WriteAsync(path, updated, cancellationToken).ConfigureAwait(false);
+        return updated;
     }
 
     public async Task<IdentityDocument> WriteIdentityAsync(
@@ -539,6 +568,7 @@ public sealed class JsonDeckStateStore : IDeckStateStore
             documentPath,
             document with
             {
+                SchemaVersion = HauntDocument.CurrentSchemaVersion,
                 Name = target.Value,
                 Aliases = AddAlias(document.Aliases, source.Value),
             },

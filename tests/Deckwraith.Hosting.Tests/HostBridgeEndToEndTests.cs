@@ -47,6 +47,23 @@ public sealed class HostBridgeEndToEndTests
                 Assert.Equal(create, duplicate);
                 AssertSuccess(await host.ExecuteAsync(Command(
                     "haunt.create", new { name = "deckwraith" }, "create-haunt")));
+                var projectPath = Path.Combine(rootPath, "project");
+                Directory.CreateDirectory(projectPath);
+                var configuredProject = await host.ExecuteAsync(Command(
+                    "haunt.configure-project",
+                    new
+                    {
+                        haunt = "deckwraith",
+                        projectPath,
+                        autoCommitEnabled = false,
+                    },
+                    "configure-haunt-project"));
+                AssertSuccess(configuredProject);
+                Assert.False(configuredProject.Result!.Value
+                    .GetProperty("value")
+                    .GetProperty("project")
+                    .GetProperty("autoCommitEnabled")
+                    .GetBoolean());
 
                 var identity = IdentityDocument.CreateSparse(
                     CanonicalName.Parse("lumen"), DateTimeOffset.UnixEpoch) with
@@ -180,6 +197,12 @@ public sealed class HostBridgeEndToEndTests
                 Assert.Contains(
                     deck.Result.Value.GetProperty("haunts").EnumerateArray(),
                     haunt => haunt.GetProperty("name").GetString() == "setup");
+                var reopenedProject = deck.Result.Value.GetProperty("haunts").EnumerateArray()
+                    .Single(haunt => haunt.GetProperty("name").GetString() == "deckwraith")
+                    .GetProperty("project");
+                Assert.Equal(
+                    Path.Combine(rootPath, "project"),
+                    reopenedProject.GetProperty("projectPath").GetString());
                 Assert.Contains(
                     deck.Result.Value.GetProperty("providers").EnumerateArray(),
                     provider => provider.GetProperty("providerId").GetString() == "fake");

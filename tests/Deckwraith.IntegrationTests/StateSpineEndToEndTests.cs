@@ -14,6 +14,63 @@ namespace Deckwraith.IntegrationTests;
 public sealed class StateSpineEndToEndTests
 {
     [Fact]
+    public async Task HauntProjectPolicyIsExplicitScopedAndOffByDefault()
+    {
+        using var temporaryDirectory = new TemporaryDirectory();
+        var projectPath = Path.Combine(temporaryDirectory.Path, "project");
+        Directory.CreateDirectory(Path.Combine(projectPath, "src"));
+        Directory.CreateDirectory(Path.Combine(projectPath, "docs"));
+        var state = new JsonDeckStateStore(temporaryDirectory.Path);
+        var archive = new JsonlAgentArchive(temporaryDirectory.Path);
+        var artifacts = new ContentAddressedArtifactStore(temporaryDirectory.Path);
+        var checkpoints = new GitCheckpointStore(temporaryDirectory.Path);
+        using var spine = new StateSpine(state, archive, artifacts, checkpoints, new FixedClock());
+        await spine.InitializeAsync(CancellationToken.None);
+
+        var created = await spine.CreateHauntAsync("compiler-lab", CancellationToken.None);
+        Assert.Null(created.Value.Project);
+
+        var configured = await spine.ConfigureHauntProjectAsync(
+            "compiler-lab",
+            Path.Combine(projectPath, "."),
+            autoCommitEnabled: true,
+            author: new ProjectCommitAuthor(
+                ProjectCommitAuthorMode.Fixed,
+                "Sera",
+                "sera@example.test"),
+            allowedPaths: ["src/../src", "docs"],
+            allowDirtyWorkingTree: true,
+            cancellationToken: CancellationToken.None);
+
+        var policy = Assert.IsType<HauntProjectPolicy>(configured.Value.Project);
+        Assert.Equal(Path.GetFullPath(projectPath), policy.ProjectPath);
+        Assert.True(policy.AutoCommitEnabled);
+        Assert.Equal(ProjectCommitAuthorMode.Fixed, policy.Author.Mode);
+        Assert.Equal("Sera", policy.Author.Name);
+        Assert.Equal(["docs", "src"], policy.AllowedPaths);
+        Assert.True(policy.AllowDirtyWorkingTree);
+        var persisted = await state.ReadHauntAsync(
+            CanonicalName.Parse("compiler-lab"), CancellationToken.None);
+        Assert.Equal(HauntDocument.CurrentSchemaVersion, persisted.SchemaVersion);
+        Assert.NotNull(persisted.Project);
+        Assert.Equal(policy.ProjectPath, persisted.Project.ProjectPath);
+        Assert.Equal(policy.AutoCommitEnabled, persisted.Project.AutoCommitEnabled);
+        Assert.Equal(policy.Author, persisted.Project.Author);
+        Assert.Equal(policy.AllowedPaths, persisted.Project.AllowedPaths);
+        Assert.Equal(policy.AllowDirtyWorkingTree, persisted.Project.AllowDirtyWorkingTree);
+
+        await Assert.ThrowsAsync<DeckStateException>(() => spine.ConfigureHauntProjectAsync(
+            "compiler-lab",
+            projectPath,
+            allowedPaths: ["../outside"],
+            cancellationToken: CancellationToken.None));
+        Assert.Equal(string.Empty, await RunGitForTestsAsync(
+            temporaryDirectory.Path,
+            ["status", "--porcelain"],
+            CancellationToken.None));
+    }
+
+    [Fact]
     public async Task SetupCollaboratorRepairsPartialInitializationWithoutDuplication()
     {
         using var temporaryDirectory = new TemporaryDirectory();

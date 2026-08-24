@@ -81,13 +81,35 @@ public sealed record HauntDocument(
     string Name,
     string? DisplayLabel,
     IReadOnlyList<string> Aliases,
-    DateTimeOffset CreatedAt)
+    DateTimeOffset CreatedAt,
+    HauntProjectPolicy? Project = null)
 {
-    public const int CurrentSchemaVersion = 1;
+    public const int CurrentSchemaVersion = 2;
 
     public static HauntDocument Create(CanonicalName name, DateTimeOffset now) =>
-        new(CurrentSchemaVersion, name.Value, null, [], now);
+        new(CurrentSchemaVersion, name.Value, null, [], now, null);
 }
+
+public enum ProjectCommitAuthorMode
+{
+    Wraith,
+    Fixed,
+}
+
+public sealed record ProjectCommitAuthor(
+    ProjectCommitAuthorMode Mode,
+    string? Name = null,
+    string? Email = null)
+{
+    public static ProjectCommitAuthor ForWraith() => new(ProjectCommitAuthorMode.Wraith);
+}
+
+public sealed record HauntProjectPolicy(
+    string ProjectPath,
+    bool AutoCommitEnabled,
+    ProjectCommitAuthor Author,
+    IReadOnlyList<string> AllowedPaths,
+    bool AllowDirtyWorkingTree);
 
 public enum RenameSubject
 {

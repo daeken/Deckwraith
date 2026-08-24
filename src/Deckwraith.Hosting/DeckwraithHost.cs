@@ -65,6 +65,7 @@ public sealed class DeckwraithHost : IDisposable
         "wraith.archive",
         "wraith.restore",
         "haunt.create",
+        "haunt.configure-project",
         "identity.update",
         "run.start",
         "run.turn",
@@ -390,6 +391,8 @@ public sealed class DeckwraithHost : IDisposable
             Read<WraithPayload>(payload).Wraith, cancellationToken).ConfigureAwait(false),
         "haunt.create" => await _state.CreateHauntAsync(
             Read<CreateNamePayload>(payload).Name, cancellationToken).ConfigureAwait(false),
+        "haunt.configure-project" => await ConfigureHauntProjectAsync(
+            payload, cancellationToken).ConfigureAwait(false),
         "identity.update" => await UpdateIdentityAsync(payload, cancellationToken).ConfigureAwait(false),
         "run.start" => await StartRunAsync(payload, cancellationToken).ConfigureAwait(false),
         "run.turn" => await ExecuteTurnAsync(payload, cancellationToken).ConfigureAwait(false),
@@ -448,6 +451,21 @@ public sealed class DeckwraithHost : IDisposable
         var command = Read<UpdateIdentityPayload>(payload);
         return await _state.UpdateIdentityAsync(
             command.Wraith, command.Identity, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task<object> ConfigureHauntProjectAsync(
+        JsonElement payload,
+        CancellationToken cancellationToken)
+    {
+        var command = Read<ConfigureHauntProjectPayload>(payload);
+        return await _state.ConfigureHauntProjectAsync(
+            command.Haunt,
+            command.ProjectPath,
+            command.AutoCommitEnabled,
+            command.Author,
+            command.AllowedPaths,
+            command.AllowDirtyWorkingTree,
+            cancellationToken).ConfigureAwait(false);
     }
 
     private async Task<object> StartRunAsync(JsonElement payload, CancellationToken cancellationToken)
@@ -691,6 +709,14 @@ public sealed class DeckwraithHost : IDisposable
     private sealed record CreateNamePayload(string Name);
 
     private sealed record WraithPayload(string Wraith);
+
+    private sealed record ConfigureHauntProjectPayload(
+        string Haunt,
+        string ProjectPath,
+        bool AutoCommitEnabled = false,
+        ProjectCommitAuthor? Author = null,
+        IReadOnlyList<string>? AllowedPaths = null,
+        bool AllowDirtyWorkingTree = false);
 
     private sealed record DeckbookPayload(string Wraith, string Haunt);
 

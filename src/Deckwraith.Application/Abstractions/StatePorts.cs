@@ -45,6 +45,10 @@ public interface IDeckStateStore
 
     Task<IdentityDocument> ReadIdentityAsync(CanonicalName name, CancellationToken cancellationToken);
 
+    Task<HauntDocument> ReadHauntAsync(
+        CanonicalName name,
+        CancellationToken cancellationToken);
+
     Task<WraithDocument> ReadWraithAsync(
         CanonicalName name,
         CancellationToken cancellationToken);
@@ -52,6 +56,11 @@ public interface IDeckStateStore
     Task<IReadOnlyList<WraithDocument>> ListWraithsAsync(CancellationToken cancellationToken);
 
     Task<IReadOnlyList<HauntDocument>> ListHauntsAsync(CancellationToken cancellationToken);
+
+    Task<HauntDocument> WriteHauntProjectAsync(
+        CanonicalName name,
+        HauntProjectPolicy project,
+        CancellationToken cancellationToken);
 
     Task<IdentityDocument> WriteIdentityAsync(
         CanonicalName name,

@@ -309,6 +309,32 @@ public sealed class StateSpine : IDisposable
         CancellationToken cancellationToken = default) =>
         _state.ListHauntsAsync(cancellationToken);
 
+    public Task<StateMutation<HauntDocument>> ConfigureHauntProjectAsync(
+        string haunt,
+        string projectPath,
+        bool autoCommitEnabled = false,
+        ProjectCommitAuthor? author = null,
+        IReadOnlyList<string>? allowedPaths = null,
+        bool allowDirtyWorkingTree = false,
+        CancellationToken cancellationToken = default) =>
+        WithMutationLockAsync(async () =>
+        {
+            await RecoverIfNeededAsync(cancellationToken).ConfigureAwait(false);
+            var resolved = await _state.ResolveHauntAsync(
+                CanonicalName.Parse(haunt), cancellationToken).ConfigureAwait(false);
+            var project = NormalizeProjectPolicy(
+                projectPath,
+                autoCommitEnabled,
+                author ?? ProjectCommitAuthor.ForWraith(),
+                allowedPaths ?? ["."],
+                allowDirtyWorkingTree);
+            var updated = await _state.WriteHauntProjectAsync(
+                resolved, project, cancellationToken).ConfigureAwait(false);
+            var commit = await _checkpoints.CheckpointAsync(
+                "haunt-project-configured", null, resolved, cancellationToken).ConfigureAwait(false);
+            return new StateMutation<HauntDocument>(updated, commit);
+        }, cancellationToken);
+
     public Task<StateMutation<IdentityDocument>> UpdateIdentityAsync(
         string wraith,
         IdentityDocument identity,
@@ -392,6 +418,87 @@ public sealed class StateSpine : IDisposable
             haunt?.Value,
             EventId: eventId,
             Timestamp: timestamp);
+
+    private static HauntProjectPolicy NormalizeProjectPolicy(
+        string projectPath,
+        bool autoCommitEnabled,
+        ProjectCommitAuthor author,
+        IReadOnlyList<string> allowedPaths,
+        bool allowDirtyWorkingTree)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(projectPath);
+        ArgumentNullException.ThrowIfNull(author);
+        ArgumentNullException.ThrowIfNull(allowedPaths);
+        var normalizedProject = Path.GetFullPath(projectPath);
+        if (!Directory.Exists(normalizedProject))
+        {
+            throw new DeckStateException(
+                $"Haunt project directory '{normalizedProject}' does not exist.");
+        }
+
+        var normalizedAuthor = author.Mode switch
+        {
+            ProjectCommitAuthorMode.Wraith => ProjectCommitAuthor.ForWraith(),
+            ProjectCommitAuthorMode.Fixed => NormalizeFixedAuthor(author),
+            _ => throw new DeckStateException(
+                $"Project commit author mode '{author.Mode}' is not supported."),
+        };
+        if (allowedPaths.Count == 0)
+        {
+            throw new DeckStateException("A haunt project must allow at least one path scope.");
+        }
+
+        var scopes = allowedPaths
+            .Select(scope => NormalizeAllowedPath(normalizedProject, scope))
+            .Distinct(StringComparer.Ordinal)
+            .Order(StringComparer.Ordinal)
+            .ToArray();
+        return new HauntProjectPolicy(
+            normalizedProject,
+            autoCommitEnabled,
+            normalizedAuthor,
+            scopes,
+            allowDirtyWorkingTree);
+    }
+
+    private static ProjectCommitAuthor NormalizeFixedAuthor(ProjectCommitAuthor author)
+    {
+        if (string.IsNullOrWhiteSpace(author.Name) || string.IsNullOrWhiteSpace(author.Email))
+        {
+            throw new DeckStateException(
+                "A fixed project commit author requires both a name and an email address.");
+        }
+
+        if (author.Name.IndexOfAny(['\r', '\n']) >= 0 ||
+            author.Email.IndexOfAny(['\r', '\n']) >= 0)
+        {
+            throw new DeckStateException("Project commit author fields cannot contain newlines.");
+        }
+
+        return author with { Name = author.Name.Trim(), Email = author.Email.Trim() };
+    }
+
+    private static string NormalizeAllowedPath(string projectPath, string scope)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(scope);
+        if (Path.IsPathRooted(scope))
+        {
+            throw new DeckStateException(
+                $"Allowed project path '{scope}' must be relative to the project directory.");
+        }
+
+        var resolved = Path.GetFullPath(Path.Combine(projectPath, scope));
+        var relative = Path.GetRelativePath(projectPath, resolved);
+        if (Path.IsPathRooted(relative) ||
+            relative == ".." ||
+            relative.StartsWith(".." + Path.DirectorySeparatorChar, StringComparison.Ordinal))
+        {
+            throw new DeckStateException(
+                $"Allowed project path '{scope}' escapes project directory '{projectPath}'.");
+        }
+
+        return relative.Replace(Path.DirectorySeparatorChar, '/');
+    }
 
     private async Task RecoverIfNeededAsync(CancellationToken cancellationToken)
     {
