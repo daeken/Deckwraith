@@ -480,11 +480,91 @@ function CheckpointPanel({ checkpoints, busy, mutate }: { checkpoints: Checkpoin
 }
 
 function LiveRail({ events }: { events: HostEvent[] }) {
-  const activeDelta = useMemo(() => events.filter((event) => event.name === "model.text-delta").slice(-12).map((event) => String(event.payload.delta ?? "")).join(""), [events]);
-  return <aside className="live-rail"><div className="live-heading"><span className="pulse" /><div><b>Live activity</b><small>host event stream</small></div></div>
-    {activeDelta && <div className="streaming-text">{activeDelta}</div>}
-    <ScrollArea.Root className="event-scroll"><ScrollArea.Viewport><div className="event-list">{[...events].reverse().map((event) => <div className="event" key={event.cursor}><span>{event.cursor}</span><b>{event.name}</b><small>{formatDate(event.timestamp)}</small></div>)}</div></ScrollArea.Viewport><ScrollArea.Scrollbar className="scrollbar" orientation="vertical"><ScrollArea.Thumb className="thumb" /></ScrollArea.Scrollbar></ScrollArea.Root>
+  const activity = useMemo(() => events.filter((event) => ACTIVITY_EVENTS.has(event.name)), [events]);
+  const latestModelStart = lastEventCursor(events, "model.started");
+  const latestModelEnd = Math.max(lastEventCursor(events, "model.completed"), lastEventCursor(events, "model.error"));
+  const modelIsActive = latestModelStart > latestModelEnd;
+  const activeDelta = useMemo(() => modelIsActive
+    ? events.filter((event) => event.name === "model.text-delta" && event.cursor > latestModelStart)
+      .map((event) => payloadString(event, "delta")).join("")
+    : "", [events, latestModelStart, modelIsActive]);
+  const kernelIsActive = lastEventCursor(events, "kernel.started") > lastEventCursor(events, "kernel.completed");
+  const isActive = modelIsActive || kernelIsActive;
+  return <aside className="live-rail"><div className="live-heading"><span className={clsx("pulse", isActive && "active")} /><div><b>Activity</b><small>{isActive ? "Work in progress" : activity.length ? "Recent work" : "Nothing running"}</small></div></div>
+    {activeDelta && <div className="streaming-text" aria-live="polite">{activeDelta}</div>}
+    {activity.length ? <ScrollArea.Root className="event-scroll"><ScrollArea.Viewport><div className="event-list">{[...activity].reverse().map((event) => {
+      const description = describeActivity(event);
+      return <div className={clsx("event", description.tone)} key={event.cursor}>
+        <span className="event-mark" />
+        <div><b>{description.title}</b><p>{description.detail}</p><small>{formatDate(event.timestamp)}</small></div>
+      </div>;
+    })}</div></ScrollArea.Viewport><ScrollArea.Scrollbar className="scrollbar" orientation="vertical"><ScrollArea.Thumb className="thumb" /></ScrollArea.Scrollbar></ScrollArea.Root>
+      : <div className="activity-empty"><b>The deck is quiet.</b><p>Model turns, tool calls, notebook execution, recovery, and failures will appear here.</p></div>}
   </aside>;
+}
+
+const ACTIVITY_EVENTS = new Set([
+  "host.request.failed",
+  "recovery.completed",
+  "model.started",
+  "model.tool-call",
+  "model.usage",
+  "model.completed",
+  "model.error",
+  "kernel.started",
+  "kernel.error",
+  "kernel.completed",
+]);
+
+function describeActivity(event: HostEvent): { title: string; detail: string; tone?: string } {
+  const wraith = payloadString(event, "wraith");
+  const run = payloadString(event, "runId");
+  const subject = [wraith, run && shortId(run)].filter(Boolean).join(" · ");
+  switch (event.name) {
+    case "host.request.failed":
+      return { title: "Request failed", detail: joinDetail(payloadString(event, "name"), payloadString(event, "message")), tone: "failed" };
+    case "recovery.completed":
+      return { title: "Recovered durable state", detail: wraith || "Startup reconciliation completed" };
+    case "model.started":
+      return { title: "Model turn started", detail: subject || "Preparing inference", tone: "active" };
+    case "model.tool-call":
+      return { title: `Tool · ${payloadString(event, "name") || "unnamed"}`, detail: subject || "The model requested a tool" };
+    case "model.usage":
+      return { title: "Model usage", detail: `${payloadNumber(event, "inputTokens")} in · ${payloadNumber(event, "outputTokens")} out` };
+    case "model.completed":
+      return { title: "Model turn finished", detail: joinDetail(subject, payloadString(event, "finishReason")) };
+    case "model.error":
+      return { title: "Model error", detail: joinDetail(payloadString(event, "code"), payloadString(event, "message")), tone: "failed" };
+    case "kernel.started":
+      return { title: `Running · ${payloadString(event, "cellName") || "cell"}`, detail: joinDetail(payloadString(event, "kernelVersion"), payloadString(event, "haunt")), tone: "active" };
+    case "kernel.error":
+      return { title: `Cell error · ${payloadString(event, "cellName") || "cell"}`, detail: payloadString(event, "message") || "Execution failed", tone: "failed" };
+    case "kernel.completed":
+      return { title: `Cell finished · ${payloadString(event, "cellName") || "cell"}`, detail: payloadString(event, "status") || "Execution completed" };
+    default:
+      return { title: event.name, detail: subject };
+  }
+}
+
+function lastEventCursor(events: HostEvent[], name: string) {
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    if (events[index].name === name) return events[index].cursor;
+  }
+  return 0;
+}
+
+function payloadString(event: HostEvent, key: string) {
+  const value = event.payload[key];
+  return typeof value === "string" ? value : "";
+}
+
+function payloadNumber(event: HostEvent, key: string) {
+  const value = event.payload[key];
+  return typeof value === "number" ? value.toLocaleString() : "0";
+}
+
+function joinDetail(...values: string[]) {
+  return values.filter(Boolean).join(" · ");
 }
 
 function CreateEntityDialog({ label, title, placeholder, onCreate }: { label: string; title: string; placeholder: string; onCreate: (name: string) => Promise<void> }) {
