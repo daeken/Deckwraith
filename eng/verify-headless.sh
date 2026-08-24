@@ -3,8 +3,14 @@ set -euo pipefail
 
 deckwraith_repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 deckwraith_rid="${1:-linux-x64}"
+deckwraith_mode="${2:-}"
 deckwraith_output="$(mktemp -d "${TMPDIR:-/tmp}/deckwraith-headless.XXXXXX")"
 trap 'rm -rf "$deckwraith_output"' EXIT
+
+if [[ -n "$deckwraith_mode" && "$deckwraith_mode" != "--publish-only" ]]; then
+  echo "Usage: verify-headless.sh [runtime-id] [--publish-only]" >&2
+  exit 2
+fi
 
 deckwraith_tests=(
   "$deckwraith_repo/tests/Deckwraith.Core.Tests/Deckwraith.Core.Tests.csproj"
@@ -19,9 +25,11 @@ deckwraith_tests=(
   "$deckwraith_repo/tests/Deckwraith.Hosting.Tests/Deckwraith.Hosting.Tests.csproj"
 )
 
-for deckwraith_test in "${deckwraith_tests[@]}"; do
-  dotnet test "$deckwraith_test" -c Release --nologo
-done
+if [[ "$deckwraith_mode" != "--publish-only" ]]; then
+  for deckwraith_test in "${deckwraith_tests[@]}"; do
+    dotnet test "$deckwraith_test" -c Release --nologo
+  done
+fi
 
 dotnet publish \
   "$deckwraith_repo/src/Deckwraith.Headless/Deckwraith.Headless.csproj" \
