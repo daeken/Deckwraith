@@ -99,7 +99,15 @@ jobs:
         with:
           generate_release_notes: true
           preserve_order: true
-          files: artifacts/**/*
+          files: |
+            artifacts/**/*.AppImage
+            artifacts/**/*.dmg
+            artifacts/**/Deckwraith.Setup.*.exe
+            artifacts/**/*-mac.zip
+            artifacts/**/*-win.zip
+            artifacts/**/*.tar.gz
+            artifacts/**/*.blockmap
+            artifacts/**/latest*.yml
       - name: Back off after a publication rate limit
         if: steps.publish_release.outcome == 'failure'
         run: sleep 180
@@ -109,4 +117,12 @@ jobs:
         with:
           generate_release_notes: true
           preserve_order: true
-          files: artifacts/**/*
+          files: |
+            artifacts/**/*.AppImage
+            artifacts/**/*.dmg
+            artifacts/**/Deckwraith.Setup.*.exe
+            artifacts/**/*-mac.zip
+            artifacts/**/*-win.zip
+            artifacts/**/*.tar.gz
+            artifacts/**/*.blockmap
+            artifacts/**/latest*.yml
