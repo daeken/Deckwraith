@@ -84,6 +84,25 @@ public sealed record ContextItem(
             output.Clone(),
             archiveFirstSequence,
             archiveLastSequence);
+
+    public static ContextItem Compaction(
+        string compactionId,
+        string summary,
+        long archiveFirstSequence,
+        long archiveLastSequence) =>
+        new(
+            compactionId,
+            ContextItemKind.Compaction,
+            ContextRole.System,
+            summary,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            archiveFirstSequence,
+            archiveLastSequence);
 }
 
 public sealed record CurrentContextDocument(

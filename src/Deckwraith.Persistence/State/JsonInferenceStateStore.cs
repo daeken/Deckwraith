@@ -86,6 +86,22 @@ public sealed class JsonInferenceStateStore : IInferenceStateStore
             ContextPath(wraith), context, cancellationToken).ConfigureAwait(false);
     }
 
+    public Task ReplaceContextAsync(
+        CanonicalName wraith,
+        CurrentContextDocument context,
+        CancellationToken cancellationToken)
+    {
+        EnsureWraithExists(wraith);
+        if (!StringComparer.Ordinal.Equals(context.Agent, wraith.Value))
+        {
+            throw new DeckStateException(
+                $"Cannot replace context for '{context.Agent}' under '{wraith}'.");
+        }
+
+        return AtomicJsonFile.WriteAsync(
+            ContextPath(wraith), context, cancellationToken);
+    }
+
     public async Task CreateRunAsync(
         CanonicalName wraith,
         RunDocument run,
@@ -143,6 +159,25 @@ public sealed class JsonInferenceStateStore : IInferenceStateStore
         }
 
         await AtomicJsonFile.WriteAsync(path, run, cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task<IReadOnlyList<RunDocument>> ListRunsAsync(
+        CanonicalName wraith,
+        CancellationToken cancellationToken)
+    {
+        EnsureWraithExists(wraith);
+        var runs = new List<RunDocument>();
+        foreach (var path in Directory.EnumerateFiles(
+            RunsPath(wraith), "run.json", SearchOption.AllDirectories).Order(StringComparer.Ordinal))
+        {
+            var run = await AtomicJsonFile.ReadAsync<RunDocument>(path, cancellationToken)
+                .ConfigureAwait(false);
+            ValidateRunIdentity(wraith, run);
+            runs.Add(run);
+        }
+
+        return runs.OrderBy(run => run.CreatedAt).ThenBy(run => run.RunId, StringComparer.Ordinal)
+            .ToArray();
     }
 
     private string ContextPath(CanonicalName wraith) =>

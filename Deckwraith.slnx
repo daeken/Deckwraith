@@ -1,6 +1,7 @@
 <Solution>
   <Folder Name="/src/">
     <Project Path="src/Deckwraith.Application/Deckwraith.Application.csproj" />
+    <Project Path="src/Deckwraith.Continuity/Deckwraith.Continuity.csproj" />
     <Project Path="src/Deckwraith.Core/Deckwraith.Core.csproj" />
     <Project Path="src/Deckwraith.Headless/Deckwraith.Headless.csproj" />
     <Project Path="src/Deckwraith.Kernels.Abstractions/Deckwraith.Kernels.Abstractions.csproj" />
@@ -14,6 +15,7 @@
     <Project Path="src/Deckwraith.Providers.OpenAI/Deckwraith.Providers.OpenAI.csproj" />
   </Folder>
   <Folder Name="/tests/">
+    <Project Path="tests/Deckwraith.Continuity.Tests/Deckwraith.Continuity.Tests.csproj" />
     <Project Path="tests/Deckwraith.Core.Tests/Deckwraith.Core.Tests.csproj" />
     <Project Path="tests/Deckwraith.IntegrationTests/Deckwraith.IntegrationTests.csproj" />
     <Project Path="tests/Deckwraith.Kernels.ContractTests/Deckwraith.Kernels.ContractTests.csproj" />

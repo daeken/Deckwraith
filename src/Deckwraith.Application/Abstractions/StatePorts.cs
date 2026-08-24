@@ -104,6 +104,11 @@ public interface IInferenceStateStore
         int expectedRevision,
         CancellationToken cancellationToken);
 
+    Task ReplaceContextAsync(
+        CanonicalName wraith,
+        CurrentContextDocument context,
+        CancellationToken cancellationToken);
+
     Task CreateRunAsync(
         CanonicalName wraith,
         RunDocument run,
@@ -117,6 +122,22 @@ public interface IInferenceStateStore
     Task WriteRunAsync(
         CanonicalName wraith,
         RunDocument run,
+        CancellationToken cancellationToken);
+
+    Task<IReadOnlyList<RunDocument>> ListRunsAsync(
+        CanonicalName wraith,
+        CancellationToken cancellationToken);
+}
+
+public interface ICompactionStore
+{
+    Task<IReadOnlyList<CompactionDocument>> ReadAllAsync(
+        CanonicalName wraith,
+        CancellationToken cancellationToken);
+
+    Task WriteAsync(
+        CanonicalName wraith,
+        CompactionDocument compaction,
         CancellationToken cancellationToken);
 }
 
