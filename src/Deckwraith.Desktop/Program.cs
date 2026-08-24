@@ -7,7 +7,7 @@ using ElectronNET.API;
 using ElectronNET.API.Entities;
 using Microsoft.Extensions.FileProviders;
 
-var deckPath = ResolveDeckPath(args);
+var deckPath = DesktopDeckPreferences.ResolveDeckPath(args);
 var builder = WebApplication.CreateBuilder(args);
 builder.WebHost.UseElectron(args);
 builder.WebHost.ConfigureKestrel(options => options.Limits.MaxRequestBodySize = 4 * 1024 * 1024);
@@ -18,7 +18,8 @@ builder.Services.ConfigureHttpJsonOptions(options =>
         new JsonStringEnumConverter(JsonNamingPolicy.CamelCase));
 });
 
-using var runtime = await DeckwraithHost.OpenAsync(deckPath);
+using var session = await DesktopDeckSession.OpenAsync(deckPath);
+BrowserWindow? mainWindow = null;
 var app = builder.Build();
 app.Use(async (context, next) =>
 {
@@ -51,8 +52,57 @@ else
 app.MapGet("/api/v1/status", () => Results.Json(new
 {
     protocolVersion = HostProtocol.CurrentVersion,
-    eventCursor = runtime.LatestEventCursor,
+    eventCursor = session.LatestEventCursor,
+    deckPath = session.DeckPath,
 }, ProtocolJson.Options));
+
+app.MapPost("/api/v1/deck/pick", async (DeckPickerRequest request) =>
+{
+    if (!HybridSupport.IsElectronActive || mainWindow is null)
+    {
+        return Results.Json(
+            new { code = "native-dialog-unavailable", message = "Enter the deck folder directly in this host." },
+            ProtocolJson.Options,
+            statusCode: StatusCodes.Status501NotImplemented);
+    }
+
+    var selected = await Electron.Dialog.ShowOpenDialogAsync(
+        mainWindow,
+        new OpenDialogOptions
+        {
+            Title = "Choose the Deckwraith deck folder",
+            ButtonLabel = "Use this folder",
+            DefaultPath = FindExistingDirectory(request.DefaultPath ?? session.DeckPath),
+            Properties =
+            [
+                OpenDialogProperty.openDirectory,
+                OpenDialogProperty.createDirectory,
+                OpenDialogProperty.showHiddenFiles,
+            ],
+        });
+    return Results.Json(new { path = selected.FirstOrDefault() }, ProtocolJson.Options);
+});
+
+app.MapPost("/api/v1/deck/select", async (
+    DeckSelectionRequest request,
+    CancellationToken cancellationToken) =>
+{
+    try
+    {
+        var selected = await session.SelectAsync(request.Path, cancellationToken)
+            .ConfigureAwait(false);
+        await DesktopDeckPreferences.SaveDeckPathAsync(
+            selected.DeckPath, cancellationToken).ConfigureAwait(false);
+        return Results.Json(selected, ProtocolJson.Options);
+    }
+    catch (DesktopDeckException exception)
+    {
+        return Results.Json(
+            new { code = exception.Code, exception.Message },
+            ProtocolJson.Options,
+            statusCode: StatusCodes.Status400BadRequest);
+    }
+});
 
 app.MapPost("/api/v1/request", async (
     HostRequest request,
@@ -60,7 +110,7 @@ app.MapPost("/api/v1/request", async (
 {
     try
     {
-        var response = await runtime.ExecuteAsync(request, cancellationToken).ConfigureAwait(false);
+        var response = await session.ExecuteAsync(request, cancellationToken).ConfigureAwait(false);
         return Results.Json(response, ProtocolJson.Options);
     }
     catch (HostProtocolException exception)
@@ -82,7 +132,7 @@ app.MapGet("/api/v1/events", async (
     context.Response.ContentType = "text/event-stream";
     try
     {
-        await foreach (var hostEvent in runtime.ReadEventsAsync(
+        await foreach (var hostEvent in session.ReadEventsAsync(
             after ?? 0, cancellationToken).ConfigureAwait(false))
         {
             await context.Response.WriteAsync(
@@ -121,7 +171,7 @@ else
 await app.StartAsync();
 if (HybridSupport.IsElectronActive)
 {
-    var window = await Electron.WindowManager.CreateWindowAsync(new BrowserWindowOptions
+    mainWindow = await Electron.WindowManager.CreateWindowAsync(new BrowserWindowOptions
     {
         Width = 1440,
         Height = 960,
@@ -136,33 +186,22 @@ if (HybridSupport.IsElectronActive)
             Sandbox = true,
         },
     });
-    window.SetTitle("Deckwraith");
-    window.OnReadyToShow += window.Show;
-    window.OnClosed += app.Lifetime.StopApplication;
+    mainWindow.SetTitle("Deckwraith");
+    mainWindow.OnReadyToShow += mainWindow.Show;
+    mainWindow.OnClosed += app.Lifetime.StopApplication;
 }
 
 await app.WaitForShutdownAsync();
 
-static string ResolveDeckPath(string[] arguments)
+static string FindExistingDirectory(string path)
 {
-    var index = Array.FindIndex(
-        arguments, argument => StringComparer.Ordinal.Equals(argument, "--deck-path"));
-    if (index >= 0 && index + 1 < arguments.Length &&
-        !string.IsNullOrWhiteSpace(arguments[index + 1]))
+    var candidate = new DirectoryInfo(DesktopDeckPreferences.NormalizePath(path));
+    while (candidate is not null && !candidate.Exists)
     {
-        return Path.GetFullPath(arguments[index + 1]);
+        candidate = candidate.Parent;
     }
 
-    var configured = Environment.GetEnvironmentVariable("DECKWRAITH_DECK_PATH");
-    if (!string.IsNullOrWhiteSpace(configured))
-    {
-        return Path.GetFullPath(configured);
-    }
-
-    return Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "Deckwraith",
-        "deck-state");
+    return candidate?.FullName ?? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
 }
 
 static string? ResolveRendererRoot(string contentRoot)
@@ -189,4 +228,247 @@ internal static class ProtocolJson
         options.Converters.Add(new JsonStringEnumConverter(JsonNamingPolicy.CamelCase));
         return options;
     }
+}
+
+internal sealed record DeckPickerRequest(string? DefaultPath);
+
+internal sealed record DeckSelectionRequest(string Path);
+
+internal sealed record DeckSelectionResult(string DeckPath, bool Initialized);
+
+internal sealed class DesktopDeckException(string code, string message) : Exception(message)
+{
+    public string Code { get; } = code;
+}
+
+internal sealed class DesktopDeckSession : IDisposable
+{
+    private readonly SemaphoreSlim _gate = new(1, 1);
+    private DeckwraithHost _runtime;
+    private bool _disposed;
+
+    private DesktopDeckSession(string deckPath, DeckwraithHost runtime)
+    {
+        DeckPath = deckPath;
+        _runtime = runtime;
+    }
+
+    public string DeckPath { get; private set; }
+
+    public long LatestEventCursor => _runtime.LatestEventCursor;
+
+    public static async Task<DesktopDeckSession> OpenAsync(
+        string deckPath,
+        CancellationToken cancellationToken = default)
+    {
+        var normalized = DesktopDeckPreferences.NormalizePath(deckPath);
+        return new DesktopDeckSession(
+            normalized,
+            await DeckwraithHost.OpenAsync(normalized, cancellationToken: cancellationToken)
+                .ConfigureAwait(false));
+    }
+
+    public async Task<DeckSelectionResult> SelectAsync(
+        string path,
+        CancellationToken cancellationToken = default)
+    {
+        var normalized = DesktopDeckPreferences.NormalizePath(path);
+        if (File.Exists(normalized))
+        {
+            throw new DesktopDeckException(
+                "deck-path-is-file", $"Deck folder '{normalized}' is an existing file.");
+        }
+
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            if (File.Exists(Path.Combine(DeckPath, "deck.json")) &&
+                !DesktopDeckPreferences.PathsEqual(DeckPath, normalized))
+            {
+                throw new DesktopDeckException(
+                    "deck-already-open", "Choose a different deck before initializing the current one.");
+            }
+
+            if (!DesktopDeckPreferences.PathsEqual(DeckPath, normalized))
+            {
+                var next = await DeckwraithHost.OpenAsync(
+                    normalized, cancellationToken: cancellationToken).ConfigureAwait(false);
+                var previous = _runtime;
+                _runtime = next;
+                DeckPath = normalized;
+                previous.Dispose();
+            }
+
+            return new DeckSelectionResult(
+                DeckPath,
+                File.Exists(Path.Combine(DeckPath, "deck.json")));
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    public async Task<HostResponse> ExecuteAsync(
+        HostRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            return await _runtime.ExecuteAsync(request, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    public IAsyncEnumerable<HostEvent> ReadEventsAsync(
+        long afterCursor,
+        CancellationToken cancellationToken = default) =>
+        _runtime.ReadEventsAsync(afterCursor, cancellationToken);
+
+    public void Dispose()
+    {
+        if (_disposed)
+        {
+            return;
+        }
+
+        _disposed = true;
+        _runtime.Dispose();
+        _gate.Dispose();
+    }
+}
+
+internal static class DesktopDeckPreferences
+{
+    private const string DeckPathEnvironmentVariable = "DECKWRAITH_DECK_PATH";
+    private static readonly JsonSerializerOptions PreferenceJson = new(JsonSerializerDefaults.Web)
+    {
+        WriteIndented = true,
+    };
+
+    public static string ResolveDeckPath(string[] arguments)
+    {
+        var index = Array.FindIndex(
+            arguments, argument => StringComparer.Ordinal.Equals(argument, "--deck-path"));
+        if (index >= 0 && index + 1 < arguments.Length &&
+            !string.IsNullOrWhiteSpace(arguments[index + 1]))
+        {
+            return NormalizePath(arguments[index + 1]);
+        }
+
+        var configured = Environment.GetEnvironmentVariable(DeckPathEnvironmentVariable);
+        if (!string.IsNullOrWhiteSpace(configured))
+        {
+            return NormalizePath(configured);
+        }
+
+        var preference = ReadDeckPath();
+        if (!string.IsNullOrWhiteSpace(preference))
+        {
+            return NormalizePath(preference);
+        }
+
+        var legacy = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "Deckwraith",
+            "deck-state");
+        if (File.Exists(Path.Combine(legacy, "deck.json")))
+        {
+            return Path.GetFullPath(legacy);
+        }
+
+        return Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+            ".deckwraith");
+    }
+
+    public static string NormalizePath(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            throw new DesktopDeckException("deck-path-required", "Choose a folder for the deck.");
+        }
+
+        var trimmed = path.Trim();
+        var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        if (StringComparer.Ordinal.Equals(trimmed, "~"))
+        {
+            trimmed = home;
+        }
+        else if (trimmed.StartsWith($"~{Path.DirectorySeparatorChar}", StringComparison.Ordinal) ||
+                 trimmed.StartsWith($"~{Path.AltDirectorySeparatorChar}", StringComparison.Ordinal))
+        {
+            trimmed = Path.Combine(home, trimmed[2..]);
+        }
+
+        try
+        {
+            return Path.TrimEndingDirectorySeparator(Path.GetFullPath(trimmed));
+        }
+        catch (Exception exception) when (exception is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            throw new DesktopDeckException("invalid-deck-path", $"Deck folder '{path}' is not valid.");
+        }
+    }
+
+    public static bool PathsEqual(string left, string right) =>
+        OperatingSystem.IsWindows()
+            ? StringComparer.OrdinalIgnoreCase.Equals(NormalizePath(left), NormalizePath(right))
+            : StringComparer.Ordinal.Equals(NormalizePath(left), NormalizePath(right));
+
+    public static async Task SaveDeckPathAsync(
+        string path,
+        CancellationToken cancellationToken = default)
+    {
+        var preferencePath = PreferencePath();
+        Directory.CreateDirectory(Path.GetDirectoryName(preferencePath)!);
+        var temporary = $"{preferencePath}.{Guid.NewGuid():N}.tmp";
+        try
+        {
+            await File.WriteAllTextAsync(
+                temporary,
+                JsonSerializer.Serialize(new DesktopPreferences(NormalizePath(path)), PreferenceJson) + "\n",
+                cancellationToken).ConfigureAwait(false);
+            File.Move(temporary, preferencePath, true);
+        }
+        finally
+        {
+            if (File.Exists(temporary))
+            {
+                File.Delete(temporary);
+            }
+        }
+    }
+
+    private static string? ReadDeckPath()
+    {
+        var path = PreferencePath();
+        if (!File.Exists(path))
+        {
+            return null;
+        }
+
+        try
+        {
+            return JsonSerializer.Deserialize<DesktopPreferences>(
+                File.ReadAllText(path), PreferenceJson)?.DeckPath;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    private static string PreferencePath() => Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+        "Deckwraith",
+        "desktop.json");
+
+    private sealed record DesktopPreferences(string DeckPath);
 }

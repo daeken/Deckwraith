@@ -3,7 +3,15 @@ import * as ScrollArea from "@radix-ui/react-scroll-area";
 import * as Tabs from "@radix-ui/react-tabs";
 import clsx from "clsx";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { assertProtocolCompatible, BridgeError, command, query, subscribe } from "./ipc/bridge";
+import {
+  assertProtocolCompatible,
+  BridgeError,
+  command,
+  pickDeckFolder,
+  query,
+  selectDeckPath,
+  subscribe,
+} from "./ipc/bridge";
 import type {
   ArchivePage,
   CheckpointSummary,
@@ -28,6 +36,8 @@ export function App() {
   const [archive, setArchive] = useState<ArchivePage | null>(null);
   const [checkpoints, setCheckpoints] = useState<CheckpointSummary[]>([]);
   const [events, setEvents] = useState<HostEvent[]>([]);
+  const [deckPath, setDeckPath] = useState("");
+  const [deckPathDraft, setDeckPathDraft] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
@@ -85,7 +95,11 @@ export function App() {
   }, [selectedHaunt, selectedWraith]);
 
   useEffect(() => {
-    void assertProtocolCompatible().then(refresh).catch((reason: unknown) => {
+    void assertProtocolCompatible().then((status) => {
+      setDeckPath(status.deckPath);
+      setDeckPathDraft(status.deckPath);
+      return refresh();
+    }).catch((reason: unknown) => {
       setError(messageOf(reason));
     });
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
@@ -116,6 +130,19 @@ export function App() {
     }
   }, [refresh]);
 
+  const chooseDeckFolder = useCallback(async () => {
+    setBusy(true);
+    setError("");
+    try {
+      const selected = await pickDeckFolder(deckPathDraft);
+      if (selected) setDeckPathDraft(selected);
+    } catch (reason) {
+      setError(messageOf(reason));
+    } finally {
+      setBusy(false);
+    }
+  }, [deckPathDraft]);
+
   if (initialized === null) {
     if (error) {
       return <CenteredState eyebrow="Host unavailable" title="Deckwraith cannot connect." detail={error} />;
@@ -125,17 +152,18 @@ export function App() {
 
   if (!initialized) {
     return (
-      <CenteredState
-        eyebrow="A new deck"
-        title="Nothing is haunting this machine yet."
-        detail="Initialize a private Git-backed deck, then create the first durable identity."
-        action={
-          <button className="primary" disabled={busy} onClick={() => void mutate(async () => {
-            await command("deck.initialize");
-          })}>
-            Initialize Deckwraith
-          </button>
-        }
+      <DeckOnboarding
+        path={deckPathDraft}
+        busy={busy}
+        error={error}
+        onPathChange={setDeckPathDraft}
+        onChooseFolder={chooseDeckFolder}
+        onInitialize={() => mutate(async () => {
+          const selected = await selectDeckPath(deckPathDraft);
+          setDeckPath(selected.deckPath);
+          setDeckPathDraft(selected.deckPath);
+          if (!selected.initialized) await command("deck.initialize");
+        })}
       />
     );
   }
@@ -198,6 +226,10 @@ export function App() {
             setSelectedHaunt(name.toLowerCase());
           })}
         />
+        <div className="deck-location" title={deckPath}>
+          <span>Deck folder</span>
+          <code>{deckPath}</code>
+        </div>
         <div className="sensitivity">
           <span>Local & sensitive</span>
           Archive and Git history may contain secrets. Deckwraith never publishes them automatically.
@@ -571,6 +603,33 @@ function CreateEntityDialog({ label, title, placeholder, onCreate }: { label: st
   const [name, setName] = useState("");
   const [open, setOpen] = useState(false);
   return <Dialog.Root open={open} onOpenChange={setOpen}><Dialog.Trigger asChild><button className="quiet add-button">＋ {label}</button></Dialog.Trigger><Dialog.Portal><Dialog.Overlay className="dialog-overlay" /><Dialog.Content className="dialog-content"><Dialog.Title>{title}</Dialog.Title><Dialog.Description>Use a portable canonical name. It can be changed later without breaking history.</Dialog.Description><input autoFocus value={name} placeholder={placeholder} onChange={(event) => setName(event.target.value)} /><div className="action-row"><Dialog.Close asChild><button>Cancel</button></Dialog.Close><button className="primary" disabled={!name} onClick={() => { void onCreate(name).then(() => { setName(""); setOpen(false); }); }}>Create</button></div></Dialog.Content></Dialog.Portal></Dialog.Root>;
+}
+
+function DeckOnboarding({ path, busy, error, onPathChange, onChooseFolder, onInitialize }: {
+  path: string;
+  busy: boolean;
+  error: string;
+  onPathChange: (value: string) => void;
+  onChooseFolder: () => Promise<void>;
+  onInitialize: () => Promise<void>;
+}) {
+  return <div className="deck-onboarding">
+    <div className="sigil">◈</div>
+    <span className="eyebrow">A new deck</span>
+    <h1>Where should the deck live?</h1>
+    <p>Deckwraith keeps identity, archives, notebooks, and Git history together in one private folder.</p>
+    <section className="deck-setup-card">
+      <label>Deck folder<div className="path-picker">
+        <input value={path} onChange={(event) => onPathChange(event.target.value)} spellCheck={false} />
+        <button disabled={busy} onClick={() => void onChooseFolder()}>Choose…</button>
+      </div></label>
+      <p>The default is <code>~/.deckwraith</code>. You can also open an existing deck.</p>
+      {error && <div className="setup-error"><b>That didn’t work.</b> {error}</div>}
+      <button className="primary" disabled={busy || !path.trim()} onClick={() => void onInitialize()}>
+        Open or create deck
+      </button>
+    </section>
+  </div>;
 }
 
 function CenteredState({ eyebrow, title, detail, action }: { eyebrow: string; title: string; detail?: string; action?: React.ReactNode }) {

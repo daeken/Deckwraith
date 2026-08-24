@@ -3,6 +3,17 @@ import { HOST_PROTOCOL_VERSION } from "./protocol";
 
 type RequestKind = "command" | "query";
 
+export type HostStatus = {
+  protocolVersion: number;
+  eventCursor: number;
+  deckPath: string;
+};
+
+export type DeckSelection = {
+  deckPath: string;
+  initialized: boolean;
+};
+
 type HostResponse<T> = {
   protocolVersion: number;
   requestId: string;
@@ -22,19 +33,46 @@ export class BridgeError extends Error {
   }
 }
 
-export async function assertProtocolCompatible(): Promise<void> {
+export async function assertProtocolCompatible(): Promise<HostStatus> {
   const response = await fetch("/api/v1/status", { cache: "no-store" });
   if (!response.ok) {
     throw new BridgeError("transport", `Deckwraith host returned ${response.status}.`, true);
   }
 
-  const status = (await response.json()) as { protocolVersion?: number };
+  const status = (await response.json()) as HostStatus;
   if (status.protocolVersion !== HOST_PROTOCOL_VERSION) {
     throw new BridgeError(
       "unsupported-protocol",
       `Renderer protocol ${HOST_PROTOCOL_VERSION} cannot use host protocol ${String(status.protocolVersion)}.`,
     );
   }
+  return status;
+}
+
+export async function pickDeckFolder(defaultPath: string): Promise<string | null> {
+  const response = await fetch("/api/v1/deck/pick", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ defaultPath }),
+  });
+  const result = (await response.json()) as { path?: string | null; code?: string; message?: string };
+  if (!response.ok) {
+    throw new BridgeError(result.code ?? "transport", result.message ?? response.statusText);
+  }
+  return result.path ?? null;
+}
+
+export async function selectDeckPath(path: string): Promise<DeckSelection> {
+  const response = await fetch("/api/v1/deck/select", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ path }),
+  });
+  const result = (await response.json()) as DeckSelection & { code?: string; message?: string };
+  if (!response.ok) {
+    throw new BridgeError(result.code ?? "transport", result.message ?? response.statusText);
+  }
+  return result;
 }
 
 export async function request<T>(

@@ -9,7 +9,14 @@ The desktop resolves its deck path in this order:
 
 1. `--deck-path /absolute/path`
 2. `DECKWRAITH_DECK_PATH`
-3. The platform-local application-data directory under `Deckwraith/deck-state`
+3. The folder selected and saved by the desktop
+4. A previously initialized legacy deck under the platform-local `Deckwraith/deck-state`
+5. `~/.deckwraith`
+
+Before initializing a new deck, the desktop shows the resolved folder, allows direct path entry or
+a native folder chooser, and can open an existing deck instead. The active absolute path remains
+visible in the sidebar after initialization. The small desktop preference file contains only that
+path; the deck itself remains the authority for durable state.
 
 The CLI always takes the deck path as its second argument. Initialize it before other operations:
 
