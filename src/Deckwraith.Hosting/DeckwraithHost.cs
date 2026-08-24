@@ -66,6 +66,8 @@ public sealed record ConversationAttachment(
     long Length,
     string? MediaType);
 
+public sealed record ConversationAttachmentSource(string Path, string? MediaType = null);
+
 public sealed class DeckwraithHost : IDisposable
 {
     public static readonly IReadOnlyList<string> Commands =
@@ -324,14 +326,73 @@ public sealed class DeckwraithHost : IDisposable
         string? mediaType = null,
         CancellationToken cancellationToken = default)
     {
+        var stored = await StoreConversationAttachmentsAsync(
+            wraith,
+            haunt,
+            [new ConversationAttachmentSource(path, mediaType)],
+            cancellationToken).ConfigureAwait(false);
+        return stored[0];
+    }
+
+    public async Task<IReadOnlyList<ConversationAttachment>> StoreConversationAttachmentsAsync(
+        string wraith,
+        string haunt,
+        IReadOnlyList<ConversationAttachmentSource> sources,
+        CancellationToken cancellationToken = default)
+    {
         ArgumentException.ThrowIfNullOrWhiteSpace(wraith);
         ArgumentException.ThrowIfNullOrWhiteSpace(haunt);
-        ArgumentException.ThrowIfNullOrWhiteSpace(path);
-        const long maximumLength = 32L * 1024 * 1024;
-        FileInfo file;
+        ArgumentNullException.ThrowIfNull(sources);
+        var prepared = new List<PreparedConversationAttachment>(sources.Count);
         try
         {
-            file = new FileInfo(Path.GetFullPath(path));
+            foreach (var source in sources)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                prepared.Add(OpenConversationAttachment(source));
+            }
+
+            var attachments = new List<ConversationAttachment>(prepared.Count);
+            foreach (var attachment in prepared)
+            {
+                var stored = await _state.StoreArtifactAsync(
+                    wraith,
+                    haunt,
+                    attachment.Content,
+                    attachment.MediaType,
+                    cancellationToken).ConfigureAwait(false);
+                attachments.Add(new ConversationAttachment(
+                    attachment.FileName,
+                    stored.Value.Hash,
+                    stored.Value.Length,
+                    stored.Value.MediaType));
+            }
+
+            return attachments;
+        }
+        finally
+        {
+            foreach (var attachment in prepared)
+            {
+                await attachment.Content.DisposeAsync().ConfigureAwait(false);
+            }
+        }
+    }
+
+    private static PreparedConversationAttachment OpenConversationAttachment(
+        ConversationAttachmentSource? source)
+    {
+        const long maximumLength = 32L * 1024 * 1024;
+        if (source is null || string.IsNullOrWhiteSpace(source.Path))
+        {
+            throw new HostProtocolException(
+                "attachment-invalid", "The selected attachment path is invalid.");
+        }
+
+        string fullPath;
+        try
+        {
+            fullPath = Path.GetFullPath(source.Path);
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
@@ -339,37 +400,65 @@ public sealed class DeckwraithHost : IDisposable
                 "attachment-invalid", "The selected attachment path is invalid.");
         }
 
-        if (!file.Exists)
+        try
+        {
+            var file = new FileInfo(fullPath);
+            if (!file.Exists)
+            {
+                throw new HostProtocolException(
+                    "attachment-missing", "The selected attachment no longer exists.");
+            }
+
+            if (file.Length > maximumLength)
+            {
+                throw new HostProtocolException(
+                    "attachment-too-large", "Conversation attachments may not exceed 32 MB each.");
+            }
+
+            var content = new FileStream(
+                file.FullName,
+                FileMode.Open,
+                FileAccess.Read,
+                FileShare.Read,
+                64 * 1024,
+                FileOptions.Asynchronous | FileOptions.SequentialScan);
+            if (content.Length > maximumLength)
+            {
+                content.Dispose();
+                throw new HostProtocolException(
+                    "attachment-too-large", "Conversation attachments may not exceed 32 MB each.");
+            }
+
+            return new PreparedConversationAttachment(
+                file.Name,
+                source.MediaType,
+                content);
+        }
+        catch (HostProtocolException)
+        {
+            throw;
+        }
+        catch (FileNotFoundException)
         {
             throw new HostProtocolException(
                 "attachment-missing", "The selected attachment no longer exists.");
         }
-
-        if (file.Length > maximumLength)
+        catch (DirectoryNotFoundException)
         {
             throw new HostProtocolException(
-                "attachment-too-large", "Conversation attachments may not exceed 32 MB each.");
+                "attachment-missing", "The selected attachment no longer exists.");
         }
-
-        await using var content = new FileStream(
-            file.FullName,
-            FileMode.Open,
-            FileAccess.Read,
-            FileShare.Read,
-            64 * 1024,
-            FileOptions.Asynchronous | FileOptions.SequentialScan);
-        var stored = await _state.StoreArtifactAsync(
-            wraith,
-            haunt,
-            content,
-            mediaType,
-            cancellationToken).ConfigureAwait(false);
-        return new ConversationAttachment(
-            file.Name,
-            stored.Value.Hash,
-            stored.Value.Length,
-            stored.Value.MediaType);
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            throw new HostProtocolException(
+                "attachment-unreadable", "Deckwraith could not read the selected attachment.");
+        }
     }
+
+    private sealed record PreparedConversationAttachment(
+        string FileName,
+        string? MediaType,
+        FileStream Content);
 
     public Task<HostResponse> ExecuteAsync(
         HostRequest request,

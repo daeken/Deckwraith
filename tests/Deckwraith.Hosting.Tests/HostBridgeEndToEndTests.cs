@@ -168,6 +168,71 @@ public sealed class HostBridgeEndToEndTests
     }
 
     [Fact]
+    public async Task InvalidAttachmentBatchDoesNotStoreItsValidMembers()
+    {
+        var temporaryRoot = Path.Combine(
+            Path.GetTempPath(), $"deckwraith-host-attachment-batch-{Guid.NewGuid():N}");
+        var rootPath = Path.Combine(temporaryRoot, "deck");
+        var validPath = Path.Combine(temporaryRoot, "valid.txt");
+        var oversizedPath = Path.Combine(temporaryRoot, "oversized.bin");
+        var missingPath = Path.Combine(temporaryRoot, "missing.txt");
+        Directory.CreateDirectory(rootPath);
+        await File.WriteAllTextAsync(validPath, "This valid file must not be stored alone.");
+        await using (var oversized = new FileStream(
+            oversizedPath, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+        {
+            oversized.SetLength(32L * 1024 * 1024 + 1);
+        }
+
+        try
+        {
+            var options = DeckwraithHostOptions.CreateDefault() with
+            {
+                CredentialStore = new EmptyCredentialStore(),
+            };
+            using var host = await DeckwraithHost.OpenAsync(rootPath, options);
+            AssertSuccess(await host.ExecuteAsync(Command(
+                "deck.initialize", new { }, "initialize-for-attachment-batch")));
+
+            var tooLarge = await Assert.ThrowsAsync<HostProtocolException>(() =>
+                host.StoreConversationAttachmentsAsync(
+                    "steward",
+                    "setup",
+                    [
+                        new ConversationAttachmentSource(validPath, "text/plain"),
+                        new ConversationAttachmentSource(oversizedPath),
+                    ]));
+            Assert.Equal("attachment-too-large", tooLarge.Code);
+
+            var missing = await Assert.ThrowsAsync<HostProtocolException>(() =>
+                host.StoreConversationAttachmentsAsync(
+                    "steward",
+                    "setup",
+                    [
+                        new ConversationAttachmentSource(validPath, "text/plain"),
+                        new ConversationAttachmentSource(missingPath),
+                    ]));
+            Assert.Equal("attachment-missing", missing.Code);
+
+            var storedArtifactRoot = Path.Combine(
+                rootPath, "haunts", "setup", "artifacts", "sha256");
+            Assert.False(Directory.Exists(storedArtifactRoot));
+            var archive = await host.ExecuteAsync(Query(
+                "archive.snapshot",
+                new { wraith = "steward", afterSequence = 0, limit = 100 },
+                "attachment-batch-archive"));
+            AssertSuccess(archive);
+            Assert.DoesNotContain(
+                archive.Result!.Value.GetProperty("records").EnumerateArray(),
+                record => record.GetProperty("kind").GetString() == "artifact.stored");
+        }
+        finally
+        {
+            Directory.Delete(temporaryRoot, recursive: true);
+        }
+    }
+
+    [Fact]
     public async Task TypedBridgeOwnsLifecycleEventsReconnectAndIdentity()
     {
         var rootPath = Path.Combine(

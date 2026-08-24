@@ -288,19 +288,19 @@ app.MapPost("/api/v1/conversation/attachments/pick", async (
                 OpenDialogProperty.showHiddenFiles,
             ],
         });
-    var attachments = new List<ConversationAttachment>();
     try
     {
-        foreach (var path in selected)
+        var sources = selected.Select(path =>
         {
             _ = contentTypes.TryGetContentType(path, out var mediaType);
-            attachments.Add(await session.StoreConversationAttachmentAsync(
-                request.Wraith,
-                request.Haunt,
-                path,
-                mediaType,
-                cancellationToken).ConfigureAwait(false));
-        }
+            return new ConversationAttachmentSource(path, mediaType);
+        }).ToArray();
+        var attachments = await session.StoreConversationAttachmentsAsync(
+            request.Wraith,
+            request.Haunt,
+            sources,
+            cancellationToken).ConfigureAwait(false);
+        return Results.Json(attachments, ProtocolJson.Options);
     }
     catch (HostProtocolException exception)
     {
@@ -309,8 +309,6 @@ app.MapPost("/api/v1/conversation/attachments/pick", async (
             ProtocolJson.Options,
             statusCode: StatusCodes.Status400BadRequest);
     }
-
-    return Results.Json(attachments, ProtocolJson.Options);
 });
 
 app.MapPost("/api/v1/deck/select", async (
@@ -645,6 +643,18 @@ internal sealed class DesktopDeckSession : IDisposable
                 haunt,
                 path,
                 mediaType,
+                cancellationToken).ConfigureAwait(false);
+
+    public async Task<IReadOnlyList<ConversationAttachment>> StoreConversationAttachmentsAsync(
+        string wraith,
+        string haunt,
+        IReadOnlyList<ConversationAttachmentSource> sources,
+        CancellationToken cancellationToken = default) =>
+        await (await GetRuntimeAsync(cancellationToken).ConfigureAwait(false))
+            .StoreConversationAttachmentsAsync(
+                wraith,
+                haunt,
+                sources,
                 cancellationToken).ConfigureAwait(false);
 
     public async ValueTask<Deckwraith.Providers.Abstractions.ProviderAuthenticationStatus>
