@@ -10,7 +10,7 @@
     "compression": "maximum",
     "directories": {
       "output": "../../artifacts/desktop",
-      "buildResources": "Assets"
+      "buildResources": "bin/Assets"
     },
     "extraResources": [
       {
@@ -28,14 +28,17 @@
       "**/*"
     ],
     "mac": {
+      "icon": "bin/Assets/deckwraith-icon.icns",
       "category": "public.app-category.developer-tools",
       "target": ["dmg", "zip"]
     },
     "linux": {
+      "icon": "bin/Assets/deckwraith-icon.png",
       "category": "Development",
       "target": ["AppImage", "tar.gz"]
     },
     "win": {
+      "icon": "bin/Assets/deckwraith-icon.ico",
       "target": ["nsis", "zip"]
     }
   }

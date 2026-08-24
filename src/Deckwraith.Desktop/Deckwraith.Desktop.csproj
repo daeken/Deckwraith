@@ -12,6 +12,9 @@
   </ItemGroup>
   <ItemGroup>
     <None Include="electron.manifest.json" CopyToOutputDirectory="PreserveNewest" />
+    <None Update="Assets/deckwraith-icon.icns" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <None Update="Assets/deckwraith-icon.ico" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <None Update="Assets/deckwraith-icon.png" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
   <Target Name="BuildRenderer" BeforeTargets="ComputeFilesToPublish" Condition="'$(SkipRendererBuild)' != 'true'">
     <Exec WorkingDirectory="$(MSBuildProjectDirectory)/../../ui" Command="npm ci" />
