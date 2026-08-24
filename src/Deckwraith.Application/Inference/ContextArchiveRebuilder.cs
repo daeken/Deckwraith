@@ -28,7 +28,7 @@ public static class ContextArchiveRebuilder
         if (committed is null)
         {
             context = CurrentContextDocument.Create(
-                wraith, identityHash, toolElisionTurns, now);
+                wraith, identityHash, toolElisionTurns, DateTimeOffset.UnixEpoch);
         }
         else
         {

@@ -1,6 +1,7 @@
 ﻿using System.Text.Json;
 using Deckwraith.Application.Inference;
 using Deckwraith.Application.State;
+using Deckwraith.Continuity;
 using Deckwraith.Kernels.Abstractions;
 using Deckwraith.Kernels.CSharp;
 using Deckwraith.Kernels.PowerShell;
@@ -118,6 +119,15 @@ internal static class DeckwraithCli
                         .ConfigureAwait(false),
                 "mcp-catalog" when arguments.Length == 3 =>
                     await ReadMcpCatalogAsync(rootPath, arguments[2], cancellationToken)
+                        .ConfigureAwait(false),
+                "compact" when arguments.Length is >= 4 and <= 6 =>
+                    await CompactAsync(rootPath, arguments, cancellationToken)
+                        .ConfigureAwait(false),
+                "recover" when arguments.Length == 3 =>
+                    await RecoverAsync(rootPath, arguments[2], cancellationToken)
+                        .ConfigureAwait(false),
+                "reverse" when arguments.Length == 3 =>
+                    await ReverseAsync(rootPath, arguments[2], cancellationToken)
                         .ConfigureAwait(false),
                 _ => throw new ArgumentException($"Unknown command or invalid arguments: '{command}'."),
             };
@@ -434,6 +444,63 @@ internal static class DeckwraithCli
             new JsonlAgentArchive(rootPath),
             new GitCheckpointStore(rootPath));
 
+    private static async Task<object> CompactAsync(
+        string rootPath,
+        string[] arguments,
+        CancellationToken cancellationToken)
+    {
+        var provider = new CodexAppServerProvider(new CodexAppServerProviderOptions(
+            ResolveCodexExecutable(),
+            Path.GetTempPath()));
+        var runtime = new CompactionRuntime(
+            new JsonDeckStateStore(rootPath),
+            new JsonInferenceStateStore(rootPath),
+            new JsonlAgentArchive(rootPath),
+            new JsonCompactionStore(rootPath),
+            new GitCheckpointStore(rootPath),
+            new ModelProviderRegistry([provider]));
+        var fraction = arguments.Length >= 5
+            ? double.Parse(arguments[4], System.Globalization.CultureInfo.InvariantCulture)
+            : 0.25;
+        var minimumRecords = arguments.Length == 6
+            ? int.Parse(arguments[5], System.Globalization.CultureInfo.InvariantCulture)
+            : 8;
+        var result = await runtime.CompactAsync(
+            arguments[2],
+            provider.ProviderId,
+            arguments[3],
+            fraction,
+            minimumRecords,
+            cancellationToken).ConfigureAwait(false);
+        return new
+        {
+            compacted = result is not null,
+            result,
+        };
+    }
+
+    private static Task<RecoveryResult> RecoverAsync(
+        string rootPath,
+        string wraith,
+        CancellationToken cancellationToken) =>
+        new RecoveryRuntime(
+            rootPath,
+            new JsonDeckStateStore(rootPath),
+            new JsonInferenceStateStore(rootPath),
+            new JsonlAgentArchive(rootPath),
+            new JsonCompactionStore(rootPath),
+            new GitCheckpointStore(rootPath))
+        .RecoverAsync(wraith, cancellationToken);
+
+    private static Task<GitReversalResult> ReverseAsync(
+        string rootPath,
+        string commit,
+        CancellationToken cancellationToken) =>
+        new GitReversalRuntime(
+            rootPath,
+            new GitCheckpointStore(rootPath))
+        .ReverseCommitAsync(commit, cancellationToken);
+
     private static async Task<T> ReadJsonAsync<T>(
         string path,
         CancellationToken cancellationToken)
@@ -471,7 +538,8 @@ internal static class DeckwraithCli
             "resolve-wraith|resolve-haunt|identity|archive|store-artifact|start-run|turn|run-openai|" +
             "replace-shell|complete-run|cancel-run|" +
             "powershell|deckbook|add-cell|run-cell|run-remaining|deckbook-context|" +
-            "mcp-servers|mcp-assign-global|mcp-assign-wraith|mcp-catalog> " +
+            "mcp-servers|mcp-assign-global|mcp-assign-wraith|mcp-catalog|" +
+            "compact|recover|reverse> " +
             "<deck-path> [arguments]\n" +
             "  start-run <deck> <wraith> <haunt|-> <model> <objective>\n" +
             "  turn <deck> <wraith> <run-id> <message>\n" +
@@ -488,7 +556,10 @@ internal static class DeckwraithCli
             "  mcp-servers <deck> <registry-json>\n" +
             "  mcp-assign-global <deck> <assignment-json>\n" +
             "  mcp-assign-wraith <deck> <wraith> <assignment-json>\n" +
-            "  mcp-catalog <deck> <wraith>");
+            "  mcp-catalog <deck> <wraith>\n" +
+            "  compact <deck> <wraith> <model> [fraction] [minimum-records]\n" +
+            "  recover <deck> <wraith>\n" +
+            "  reverse <deck> <commit>");
     }
 
     private sealed class NotebookComposition : IDisposable

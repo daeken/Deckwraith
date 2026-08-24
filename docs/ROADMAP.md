@@ -102,7 +102,7 @@ invocations. Models receive only `Invoke-PowerShell`; the acceptance model disco
 command through help, explicitly invokes its side effect, preserves nested structure through a
 pipeline, and produces paired outer tool and inner MCP archive lifecycles.
 
-## 7. Continuity and recovery
+## 7. Continuity and recovery — implemented
 
 Make crashes, compaction, and reversal ordinary inspectable state transitions.
 
@@ -115,6 +115,13 @@ Make crashes, compaction, and reversal ordinary inspectable state transitions.
 Acceptance: a crash after a side-effecting start record is recovered as outcome-unknown, exact
 current context is rebuilt, an oldest-prefix summary covers no gaps or overlaps, the deckbook is
 unchanged, and a bad mutable-state checkpoint is reversed by a new commit.
+
+Compaction now validates exact content-hash coverage of only the oldest eligible contiguous
+archive prefix, uses an independently selected provider/model, and replaces only covered current
+context while retaining the raw archive and deckbook byte-for-byte. Startup recovery reconciles
+orphaned operation lifecycles without replay, rebuilds stale or corrupt projections, and cold-rolls
+interrupted shells. Non-destructive reversal creates a recovery branch and an inverse checkpoint;
+all three operations are available through the headless host.
 
 ## 8. Product shell and release
 

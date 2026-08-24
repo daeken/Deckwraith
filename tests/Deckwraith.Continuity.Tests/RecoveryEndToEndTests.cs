@@ -22,6 +22,47 @@ namespace Deckwraith.Continuity.Tests;
 public sealed class RecoveryEndToEndTests
 {
     [Fact]
+    public async Task RecoveryOfFreshWraithIsIdempotent()
+    {
+        using var temporaryDirectory = new TemporaryDirectory();
+        var clock = new FixedClock();
+        var deckState = new JsonDeckStateStore(temporaryDirectory.Path);
+        var inferenceState = new JsonInferenceStateStore(temporaryDirectory.Path);
+        var archive = new JsonlAgentArchive(temporaryDirectory.Path);
+        var checkpoints = new GitCheckpointStore(temporaryDirectory.Path);
+        using (var state = new StateSpine(
+            deckState,
+            archive,
+            new ContentAddressedArtifactStore(temporaryDirectory.Path),
+            checkpoints,
+            clock))
+        {
+            await state.InitializeAsync(CancellationToken.None);
+            await state.CreateWraithAsync("wraith1", CancellationToken.None);
+        }
+
+        var recovery = new RecoveryRuntime(
+            temporaryDirectory.Path,
+            deckState,
+            inferenceState,
+            archive,
+            new JsonCompactionStore(temporaryDirectory.Path),
+            checkpoints,
+            clock);
+        var first = await recovery.RecoverAsync("wraith1");
+        var second = await recovery.RecoverAsync("wraith1");
+
+        Assert.NotNull(first.Incident);
+        Assert.True(first.Incident.ContextRebuilt);
+        Assert.Null(second.Incident);
+        Assert.Equal(CanonicalJson.Hash(first.Context), CanonicalJson.Hash(second.Context));
+        Assert.Single(Directory.EnumerateFiles(
+            Path.Combine(temporaryDirectory.Path, "recovery", "incidents"), "*.json"));
+        Assert.Equal(string.Empty, await RunGitAsync(
+            temporaryDirectory.Path, ["status", "--porcelain"]));
+    }
+
+    [Fact]
     public async Task CrashRecoveryMarksUnknownRebuildsProjectionAndRollsShellCold()
     {
         using var temporaryDirectory = new TemporaryDirectory();
