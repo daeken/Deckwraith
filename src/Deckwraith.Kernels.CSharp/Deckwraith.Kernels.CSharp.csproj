@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp.Scripting" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="../Deckwraith.Application/Deckwraith.Application.csproj" />
+    <ProjectReference Include="../Deckwraith.Core/Deckwraith.Core.csproj" />
+    <ProjectReference Include="../Deckwraith.Kernels.Abstractions/Deckwraith.Kernels.Abstractions.csproj" />
+  </ItemGroup>
+</Project>
