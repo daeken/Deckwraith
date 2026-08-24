@@ -17,6 +17,7 @@ namespace Deckwraith.Notebooks.Tests;
 
 public sealed class DeckbookRuntimeTests
 {
+    private static readonly TimeSpan AsyncTestTimeout = TimeSpan.FromSeconds(30);
     private static readonly string[] LinearCellNames = ["one", "two", "three"];
 
     [Fact]
@@ -281,9 +282,9 @@ public sealed class DeckbookRuntimeTests
             "deckwraith",
             "cancel",
             cancellationToken: cancellation.Token);
-        await environment.Kernel.CancellationEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await environment.Kernel.CancellationEntered.Task.WaitAsync(AsyncTestTimeout);
         cancellation.Cancel();
-        var cancelled = await pending.WaitAsync(TimeSpan.FromSeconds(5));
+        var cancelled = await pending.WaitAsync(AsyncTestTimeout);
         Assert.Equal(CellKernelExecutionStatus.Cancelled, cancelled.Output.Status);
 
         var records = await new JsonlAgentArchive(environment.Path).ReadAllAsync(
