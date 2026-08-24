@@ -10,6 +10,8 @@ namespace Deckwraith.Providers.ContractTests;
 
 public sealed class CodexAppServerProviderTests
 {
+    private static readonly string[] RequiredScript = ["script"];
+
     [Fact]
     public void InstructionsContainTheCompleteIdentity()
     {
@@ -36,6 +38,78 @@ public sealed class CodexAppServerProviderTests
         Assert.Contains("\"agent\":\"lumen\"", input, StringComparison.Ordinal);
         Assert.Contains("\"text\":\"Hello from durable context.\"", input, StringComparison.Ordinal);
         Assert.Contains("Continue from the final context item", input, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ToolInstructionsExposeOnlyTheRequestedConstrainedSurface()
+    {
+        var request = CreateRequest() with
+        {
+            Tools =
+            [
+                new ModelToolDefinition(
+                    "Invoke-PowerShell",
+                    "Run PowerShell.",
+                    JsonSerializer.SerializeToElement(new
+                    {
+                        type = "object",
+                        properties = new { script = new { type = "string" } },
+                        required = RequiredScript,
+                    })),
+            ],
+        };
+
+        var instructions = CodexAppServerProvider.BuildDeveloperInstructions(request);
+
+        Assert.Contains("entire response must be one JSON object", instructions, StringComparison.Ordinal);
+        Assert.Contains("\"name\":\"Invoke-PowerShell\"", instructions, StringComparison.Ordinal);
+        Assert.Contains("\"script\"", instructions, StringComparison.Ordinal);
+        Assert.DoesNotContain("Get-DwState", instructions, StringComparison.Ordinal);
+        Assert.Contains("invoked again", instructions, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void NoToolRequestDoesNotInjectTheStructuredProtocol()
+    {
+        var instructions = CodexAppServerProvider.BuildDeveloperInstructions(CreateRequest());
+
+        Assert.DoesNotContain("tool_call", instructions, StringComparison.Ordinal);
+        Assert.Contains("return model text only", instructions, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ExactKnownToolEnvelopeMapsWithoutLeakingJsonAsAssistantText()
+    {
+        var tools = CreateTools();
+        var events = CodexAppServerProvider.TranslateBufferedResponse(
+            """{"type":"tool_call","callId":"call-1","name":"Invoke-PowerShell","arguments":{"script":"Get-Command"}}""",
+            tools);
+
+        Assert.Equal(2, events.Count);
+        var call = Assert.IsType<ModelToolCallCompleted>(events[0]);
+        Assert.Equal("call-1", call.CallId);
+        Assert.Equal("Invoke-PowerShell", call.Name);
+        Assert.Equal("Get-Command", call.Arguments.GetProperty("script").GetString());
+        Assert.Equal(
+            ModelFinishReason.ToolCalls,
+            Assert.IsType<ModelResponseCompleted>(events[1]).FinishReason);
+        Assert.DoesNotContain(events, modelEvent => modelEvent is ModelTextDelta);
+    }
+
+    [Theory]
+    [InlineData("ordinary assistant text")]
+    [InlineData("{not-json")]
+    [InlineData("{\"type\":\"tool_call\",\"callId\":\"call-1\",\"name\":\"Unknown\",\"arguments\":{}}")]
+    [InlineData("{\"type\":\"tool_call\",\"callId\":\"call-1\",\"name\":\"Invoke-PowerShell\",\"arguments\":{},\"extra\":true}")]
+    public void NonExactOrUnknownEnvelopeRemainsOrdinaryAssistantText(string response)
+    {
+        var events = CodexAppServerProvider.TranslateBufferedResponse(response, CreateTools());
+
+        Assert.Equal(response, Assert.IsType<ModelTextDelta>(events[0]).Delta);
+        Assert.Equal(
+            ModelFinishReason.Stop,
+            Assert.IsType<ModelResponseCompleted>(events[1]).FinishReason);
+        Assert.DoesNotContain(events, modelEvent => modelEvent is ModelToolCallCompleted);
     }
 
     [Theory]
@@ -135,4 +209,17 @@ public sealed class CodexAppServerProviderTests
             null,
             null);
     }
+
+    private static IReadOnlyList<ModelToolDefinition> CreateTools() =>
+    [
+        new ModelToolDefinition(
+            "Invoke-PowerShell",
+            "Run PowerShell.",
+            JsonSerializer.SerializeToElement(new
+            {
+                type = "object",
+                properties = new { script = new { type = "string" } },
+                required = RequiredScript,
+            })),
+    ];
 }

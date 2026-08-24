@@ -20,7 +20,7 @@ public sealed record CodexAppServerProviderOptions(
 
 /// <summary>
 /// Uses the supported Codex app-server embedding protocol as a ChatGPT-subscription bridge.
-/// The adapter deliberately exposes no Codex-native tools through Deckwraith's provider contract.
+/// Deckwraith tools use a constrained whole-response protocol rather than Codex-native tools.
 /// </summary>
 public sealed class CodexAppServerProvider : IModelProvider
 {
@@ -141,7 +141,7 @@ public sealed class CodexAppServerProvider : IModelProvider
                     ephemeral = true,
                     personality = "none",
                     baseInstructions = BuildBaseInstructions(request),
-                    developerInstructions = BuildDeveloperInstructions(),
+                    developerInstructions = BuildDeveloperInstructions(request),
                 },
             }, cancellationToken).ConfigureAwait(false);
             var threadStarted = await ReadResponseAsync(process, 2, cancellationToken).ConfigureAwait(false);
@@ -192,6 +192,7 @@ public sealed class CodexAppServerProvider : IModelProvider
             }, cancellationToken).ConfigureAwait(false);
 
             ModelUsageReported? latestUsage = null;
+            var bufferedText = request.Tools.Count == 0 ? null : new StringBuilder();
             while (true)
             {
                 var message = await ReadMessageAsync(process, cancellationToken).ConfigureAwait(false);
@@ -228,7 +229,15 @@ public sealed class CodexAppServerProvider : IModelProvider
                     case "item/agentMessage/delta":
                         if (parameters.TryGetProperty("delta", out var delta))
                         {
-                            yield return new ModelTextDelta(delta.GetString() ?? string.Empty);
+                            var text = delta.GetString() ?? string.Empty;
+                            if (bufferedText is null)
+                            {
+                                yield return new ModelTextDelta(text);
+                            }
+                            else
+                            {
+                                bufferedText.Append(text);
+                            }
                         }
 
                         break;
@@ -255,7 +264,18 @@ public sealed class CodexAppServerProvider : IModelProvider
                         var status = GetNestedString(parameters, "turn", "status");
                         if (StringComparer.Ordinal.Equals(status, "completed"))
                         {
-                            yield return new ModelResponseCompleted(ModelFinishReason.Stop, null);
+                            if (bufferedText is null)
+                            {
+                                yield return new ModelResponseCompleted(ModelFinishReason.Stop, null);
+                            }
+                            else
+                            {
+                                foreach (var modelEvent in TranslateBufferedResponse(
+                                    bufferedText.ToString(), request.Tools))
+                                {
+                                    yield return modelEvent;
+                                }
+                            }
                         }
                         else if (StringComparer.Ordinal.Equals(status, "interrupted"))
                         {
@@ -346,8 +366,95 @@ public sealed class CodexAppServerProvider : IModelProvider
         };
     }
 
-    private static string BuildDeveloperInstructions() =>
-        "Deckwraith is the state owner. Never execute tools in this bridge; return model text only.";
+    internal static string BuildDeveloperInstructions(ModelRequest request)
+    {
+        if (request.Tools.Count == 0)
+        {
+            return "Deckwraith is the state owner. Never execute tools in this bridge; return model text only.";
+        }
+
+        var tools = Encoding.UTF8.GetString(CanonicalJson.Serialize(request.Tools));
+        return $$"""
+            Deckwraith is the state owner. Never execute Codex commands or tools in this bridge.
+            You may either return ordinary assistant text, or request exactly one Deckwraith tool.
+            To request a tool, the entire response must be one JSON object with exactly this shape,
+            with no Markdown fence, commentary, leading text, or trailing text:
+            {"type":"tool_call","callId":"a unique non-empty ID","name":"an exact listed tool name","arguments":{ } }
+
+            Only these Deckwraith tools are available:
+            {{tools}}
+
+            Arguments must satisfy the selected tool's inputSchema. A tool result will be added to
+            provider-neutral context and you will be invoked again to continue the same turn.
+            """;
+    }
+
+    internal static IReadOnlyList<ModelEvent> TranslateBufferedResponse(
+        string response,
+        IReadOnlyList<ModelToolDefinition> tools)
+    {
+        if (TryParseToolCall(response, tools, out var toolCall))
+        {
+            return
+            [
+                toolCall,
+                new ModelResponseCompleted(ModelFinishReason.ToolCalls, null),
+            ];
+        }
+
+        return response.Length == 0
+            ? [new ModelResponseCompleted(ModelFinishReason.Stop, null)]
+            :
+            [
+                new ModelTextDelta(response),
+                new ModelResponseCompleted(ModelFinishReason.Stop, null),
+            ];
+    }
+
+    private static bool TryParseToolCall(
+        string response,
+        IReadOnlyList<ModelToolDefinition> tools,
+        out ModelToolCallCompleted toolCall)
+    {
+        toolCall = null!;
+        try
+        {
+            using var document = JsonDocument.Parse(response);
+            var root = document.RootElement;
+            if (root.ValueKind is not JsonValueKind.Object ||
+                root.EnumerateObject().Count() != 4 ||
+                !root.TryGetProperty("type", out var type) ||
+                !StringComparer.Ordinal.Equals(type.GetString(), "tool_call") ||
+                !root.TryGetProperty("callId", out var callIdElement) ||
+                callIdElement.ValueKind is not JsonValueKind.String ||
+                string.IsNullOrWhiteSpace(callIdElement.GetString()) ||
+                !root.TryGetProperty("name", out var nameElement) ||
+                nameElement.ValueKind is not JsonValueKind.String ||
+                !root.TryGetProperty("arguments", out var arguments) ||
+                arguments.ValueKind is not JsonValueKind.Object)
+            {
+                return false;
+            }
+
+            var name = nameElement.GetString()!;
+            if (!tools.Any(tool => StringComparer.Ordinal.Equals(tool.Name, name)))
+            {
+                return false;
+            }
+
+            toolCall = new ModelToolCallCompleted(
+                callIdElement.GetString()!, name, arguments.Clone());
+            return true;
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+        catch (InvalidOperationException)
+        {
+            return false;
+        }
+    }
 
     private static async Task SendAsync(
         Process process,
