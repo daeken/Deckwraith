@@ -44,6 +44,12 @@ public static class PortablePowerShellValue
             return value;
         }
 
+        if (value.GetType().IsEnum ||
+            value is DateTimeOffset or DateTime or DateOnly or TimeOnly or TimeSpan or Guid or Uri)
+        {
+            return CanonicalJson.ToElement(value);
+        }
+
         if (value is JsonElement element)
         {
             return element.Clone();
@@ -108,7 +114,7 @@ public static class PortablePowerShellValue
                wrapper.BaseObject is { } baseObject &&
                !ReferenceEquals(baseObject, wrapper))
         {
-            if (baseObject is PSCustomObject)
+            if (baseObject is PSCustomObject || !IsDirectlyPortable(baseObject))
             {
                 break;
             }
@@ -118,4 +124,10 @@ public static class PortablePowerShellValue
 
         return value;
     }
+
+    private static bool IsDirectlyPortable(object value) =>
+        value is string or bool or
+        byte or sbyte or short or ushort or int or uint or long or ulong or
+        float or double or decimal or JsonElement or byte[] or
+        IDictionary or IEnumerable;
 }

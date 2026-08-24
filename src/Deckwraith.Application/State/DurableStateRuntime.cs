@@ -42,7 +42,7 @@ public sealed class DurableStateRuntime
         var address = await ResolveAsync(
             wraith, scope, runId, haunt, cancellationToken).ConfigureAwait(false);
         return await _values.ReadAsync(
-            address.Wraith, scope, name, address.RunId, address.Haunt, cancellationToken)
+            address.Wraith, scope, name, address.ScopeRunId, address.ScopeHaunt, cancellationToken)
             .ConfigureAwait(false);
     }
 
@@ -56,7 +56,7 @@ public sealed class DurableStateRuntime
         var address = await ResolveAsync(
             wraith, scope, runId, haunt, cancellationToken).ConfigureAwait(false);
         return await _values.ListAsync(
-            address.Wraith, scope, address.RunId, address.Haunt, cancellationToken)
+            address.Wraith, scope, address.ScopeRunId, address.ScopeHaunt, cancellationToken)
             .ConfigureAwait(false);
     }
 
@@ -77,8 +77,8 @@ public sealed class DurableStateRuntime
             scope,
             name,
             value,
-            address.RunId,
-            address.Haunt,
+            address.ScopeRunId,
+            address.ScopeHaunt,
             expectedVersion,
             _clock.UtcNow,
             cancellationToken).ConfigureAwait(false);
@@ -93,7 +93,7 @@ public sealed class DurableStateRuntime
             }),
             cancellationToken).ConfigureAwait(false);
         var commit = await _checkpoints.CheckpointAsync(
-            "durable-state-written", address.Wraith, address.Haunt, cancellationToken)
+            "durable-state-written", address.Wraith, address.InvocationHaunt, cancellationToken)
             .ConfigureAwait(false);
         return new DurableStateMutation(record, commit);
     }
@@ -113,8 +113,8 @@ public sealed class DurableStateRuntime
             address.Wraith,
             scope,
             name,
-            address.RunId,
-            address.Haunt,
+            address.ScopeRunId,
+            address.ScopeHaunt,
             expectedVersion,
             cancellationToken).ConfigureAwait(false);
         if (record is null)
@@ -133,7 +133,7 @@ public sealed class DurableStateRuntime
             }),
             cancellationToken).ConfigureAwait(false);
         var commit = await _checkpoints.CheckpointAsync(
-            "durable-state-removed", address.Wraith, address.Haunt, cancellationToken)
+            "durable-state-removed", address.Wraith, address.InvocationHaunt, cancellationToken)
             .ConfigureAwait(false);
         return new DurableStateMutation(record, commit);
     }
@@ -161,19 +161,26 @@ public sealed class DurableStateRuntime
             throw new DeckStateException("Haunt-scoped state requires a haunt.");
         }
 
-        return new ResolvedAddress(resolvedWraith, runId, resolvedHaunt);
+        return new ResolvedAddress(
+            resolvedWraith,
+            scope is DurableValueScope.Run ? runId : null,
+            scope is DurableValueScope.Haunt ? resolvedHaunt : null,
+            runId,
+            resolvedHaunt);
     }
 
     private ArchiveEvent Event(ResolvedAddress address, string kind, object payload) => new(
         address.Wraith.Value,
         kind,
         CanonicalJson.ToElement(payload),
-        address.Haunt?.Value,
-        address.RunId,
+        address.InvocationHaunt?.Value,
+        address.InvocationRunId,
         Timestamp: _clock.UtcNow);
 
     private sealed record ResolvedAddress(
         CanonicalName Wraith,
-        string? RunId,
-        CanonicalName? Haunt);
+        string? ScopeRunId,
+        CanonicalName? ScopeHaunt,
+        string? InvocationRunId,
+        CanonicalName? InvocationHaunt);
 }

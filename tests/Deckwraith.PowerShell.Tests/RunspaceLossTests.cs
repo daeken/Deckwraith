@@ -172,6 +172,11 @@ public sealed class RunspaceLossTests
     private static string Quote(string value) =>
         "'" + value.Replace("'", "''", StringComparison.Ordinal) + "'";
 
+    internal static Task<string> RunGitForTestsAsync(
+        string workingDirectory,
+        string[] arguments) =>
+        RunGitAsync(workingDirectory, arguments);
+
     private static async Task<string> RunGitAsync(string workingDirectory, string[] arguments)
     {
         var startInfo = new ProcessStartInfo("git")

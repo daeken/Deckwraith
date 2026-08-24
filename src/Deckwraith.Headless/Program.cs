@@ -186,12 +186,28 @@ internal static class DeckwraithCli
         var provider = new CodexAppServerProvider(new CodexAppServerProviderOptions(
             ResolveCodexExecutable(),
             Path.GetTempPath()));
+        var deckState = new JsonDeckStateStore(rootPath);
+        var archive = new JsonlAgentArchive(rootPath);
+        var checkpoints = new GitCheckpointStore(rootPath);
+        var artifacts = new ArtifactRuntime(
+            deckState,
+            new ContentAddressedArtifactStore(rootPath),
+            archive,
+            checkpoints);
+        var durableState = new DurableStateRuntime(
+            deckState,
+            new JsonDurableValueStore(rootPath),
+            archive,
+            checkpoints);
+        var tools = new PowerShellToolBroker(new PowerShellRuntimeManager(
+            rootPath, durableState, artifacts, archive, checkpoints));
         return new InferenceRuntime(
-            new JsonDeckStateStore(rootPath),
+            deckState,
             new JsonInferenceStateStore(rootPath),
-            new JsonlAgentArchive(rootPath),
-            new GitCheckpointStore(rootPath),
-            new ModelProviderRegistry([provider]));
+            archive,
+            checkpoints,
+            new ModelProviderRegistry([provider]),
+            tools);
     }
 
     private static async Task<object> ReplaceShellAsync(

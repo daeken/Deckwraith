@@ -462,6 +462,11 @@ public sealed class InferenceRuntime : IDisposable
         {
             gate.Dispose();
         }
+
+        if (_tools is IDisposable disposableTools)
+        {
+            disposableTools.Dispose();
+        }
     }
 
     private async Task<InvocationResult> InvokeUntilTerminalAsync(
