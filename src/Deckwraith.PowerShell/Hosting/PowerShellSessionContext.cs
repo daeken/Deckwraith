@@ -1,3 +1,5 @@
+using Deckwraith.Application.Abstractions;
+using Deckwraith.Application.Files;
 using Deckwraith.Application.State;
 using Deckwraith.Mcp;
 
@@ -12,12 +14,16 @@ internal sealed class PowerShellSessionContext
         ArtifactRuntime artifactRuntime,
         McpCatalogRuntime? mcp,
         McpEffectiveCatalog? mcpCatalog,
+        IDeckStateStore? deckState,
+        IProjectCommitter? projectCommitter,
         Func<PowerShellRuntimeInfo> getRuntimeInfo)
     {
         DurableState = durableState;
         Artifacts = artifactRuntime;
         Mcp = mcp;
         McpCatalog = mcpCatalog;
+        DeckState = deckState;
+        ProjectCommitter = projectCommitter;
         GetRuntimeInfo = getRuntimeInfo;
         Invocation = new PowerShellInvocationContext(string.Empty);
     }
@@ -29,6 +35,10 @@ internal sealed class PowerShellSessionContext
     public McpCatalogRuntime? Mcp { get; }
 
     public McpEffectiveCatalog? McpCatalog { get; private set; }
+
+    public IDeckStateStore? DeckState { get; }
+
+    public IProjectCommitter? ProjectCommitter { get; }
 
     public Func<PowerShellRuntimeInfo> GetRuntimeInfo { get; }
 

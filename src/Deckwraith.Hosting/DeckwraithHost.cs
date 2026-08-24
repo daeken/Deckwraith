@@ -177,7 +177,9 @@ public sealed class DeckwraithHost : IDisposable
             mcp: new McpCatalogRuntime(
                 _rootPath, _deckState, _archive, _checkpoints, _clock),
             ownsMcp: true,
-            clock: _clock);
+            clock: _clock,
+            deckState: _deckState,
+            projectCommitter: new GitProjectCommitter());
         _powerShellKernel = new PowerShellCellKernel(_runspaces);
         _csharpKernel = new CSharpCellKernel(
             durableState, artifacts, _archive, _checkpoints, _clock);

@@ -151,8 +151,41 @@ retains recovery backups if restoration cannot complete, and returns per-file be
 Use `expectedHash = 'sha256:…'` for optimistic concurrency or `expectedHash = 'missing'` when
 creating a file.
 
-The optional commit subject and body are returned as an edit-authored proposal. They do not commit
-by themselves; the per-haunt auto-commit policy consumes that proposal when enabled.
+The optional commit subject and body are returned as an edit-authored proposal. When the current
+haunt has auto-commit enabled, `CommitSubject` is required, the configured project becomes the
+default edit root, and the successful batch creates one project commit. The result's `Commit`
+receipt contains the commit ID, repository path, author, and exact committed paths.
+
+## Haunt project commits
+
+Each `haunt.json` may contain a project policy like this:
+
+```json
+{
+  "project": {
+    "projectPath": "/path/to/project",
+    "autoCommitEnabled": true,
+    "author": {
+      "mode": "wraith",
+      "name": null,
+      "email": null
+    },
+    "allowedPaths": ["src", "tests"],
+    "allowDirtyWorkingTree": false
+  }
+}
+```
+
+Project auto-commit is off until explicitly enabled per haunt. `wraith` attribution uses the
+current wraith's canonical name and `<wraith>@deckwraith.local`; a `fixed` author requires explicit
+`name` and `email` values. Allowed paths are project-relative scopes. A false
+`allowDirtyWorkingTree` rejects the edit before publication if the repository already has changes.
+
+Deckwraith builds the commit from a temporary Git index containing only the successful edit
+receipt, then realigns those paths in the existing index. Unrelated staged and unstaged changes are
+preserved. Detached heads, unresolved conflicts, and merge/rebase/cherry-pick/revert/bisect state
+are refused. Commit hooks are disabled for the automatic commit so a hook cannot add unrelated
+paths or publish the commit. Deckwraith never runs `git push` from this policy.
 
 ## Desktop development and packaging
 

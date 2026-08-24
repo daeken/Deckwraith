@@ -1,4 +1,5 @@
 using System.Management.Automation;
+using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -14,6 +15,88 @@ namespace Deckwraith.PowerShell.Tests;
 
 public sealed class AtomicFileEditorTests
 {
+    [Fact]
+    public async Task HostedEditUsesTheHauntProjectAndCreatesOneAttributedCommit()
+    {
+        using var deckDirectory = new TemporaryDirectory();
+        using var projectDirectory = new TemporaryDirectory();
+        await InitializeGitProjectAsync(projectDirectory.Path);
+        var notePath = Path.Combine(projectDirectory.Path, "note.txt");
+        var guardedPath = Path.Combine(projectDirectory.Path, "guarded.txt");
+        await File.WriteAllTextAsync(notePath, "hello\n");
+        await File.WriteAllTextAsync(guardedPath, "untouched\n");
+        await GitAsync(projectDirectory.Path, ["add", "--all"]);
+        await GitAsync(projectDirectory.Path, ["commit", "-m", "baseline"]);
+
+        var deckState = new JsonDeckStateStore(deckDirectory.Path);
+        var archive = new JsonlAgentArchive(deckDirectory.Path);
+        var checkpoints = new GitCheckpointStore(deckDirectory.Path);
+        var artifactStore = new ContentAddressedArtifactStore(deckDirectory.Path);
+        using (var state = new StateSpine(deckState, archive, artifactStore, checkpoints))
+        {
+            await state.InitializeAsync();
+            await state.CreateHauntAsync("work");
+            await state.CreateWraithAsync("lumen");
+            await state.ConfigureHauntProjectAsync(
+                "work",
+                projectDirectory.Path,
+                autoCommitEnabled: true,
+                cancellationToken: CancellationToken.None);
+        }
+
+        var durableState = new DurableStateRuntime(
+            deckState,
+            new JsonDurableValueStore(deckDirectory.Path),
+            archive,
+            checkpoints);
+        var artifacts = new ArtifactRuntime(deckState, artifactStore, archive, checkpoints);
+        using var manager = new PowerShellRuntimeManager(
+            deckDirectory.Path,
+            durableState,
+            artifacts,
+            archive,
+            checkpoints,
+            deckState: deckState,
+            projectCommitter: new GitProjectCommitter());
+
+        var execution = await manager.ExecuteAsync(
+            new PowerShellInvocationContext("lumen", Haunt: "work"),
+            """
+            $result = Invoke-DwFileEdit -Operation @(
+                [pscustomobject]@{ path = 'note.txt'; kind = 'append'; text = 'from lumen' }
+            ) -CommitSubject 'Continue the note' -CommitBody 'Use the haunt project by default.'
+            [pscustomobject]@{
+                CommitId = $result.Commit.CommitId
+                PathCount = $result.Commit.Paths.Count
+                AuthorEmail = $result.Commit.AuthorEmail
+            }
+            """);
+
+        Assert.Empty(execution.Errors);
+        var summary = Assert.Single(execution.Output);
+        Assert.NotEmpty(Property<string>(summary, "CommitId"));
+        Assert.Equal(1, Property<int>(summary, "PathCount"));
+        Assert.Equal("lumen@deckwraith.local", Property<string>(summary, "AuthorEmail"));
+        Assert.Equal("hello\nfrom lumen", await File.ReadAllTextAsync(notePath));
+        Assert.Equal("2", await GitAsync(
+            projectDirectory.Path, ["rev-list", "--count", "HEAD"]));
+        Assert.Equal("note.txt", await GitAsync(
+            projectDirectory.Path,
+            ["diff-tree", "--no-commit-id", "--name-only", "-r", "HEAD"]));
+
+        var rejected = await manager.ExecuteAsync(
+            new PowerShellInvocationContext("lumen", Haunt: "work"),
+            """
+            Invoke-DwFileEdit -Operation @(
+                [pscustomobject]@{ path = 'guarded.txt'; kind = 'append'; text = 'should not land' }
+            )
+            """);
+        Assert.NotEmpty(rejected.Errors);
+        Assert.Equal("untouched\n", await File.ReadAllTextAsync(guardedPath));
+        Assert.Equal("2", await GitAsync(
+            projectDirectory.Path, ["rev-list", "--count", "HEAD"]));
+    }
+
     [Fact]
     public async Task TextAndStructuralJsonOperationsPublishAsOneValidatedBatch()
     {
@@ -171,6 +254,39 @@ public sealed class AtomicFileEditorTests
 
     private static string Quote(string value) =>
         "'" + value.Replace("'", "''", StringComparison.Ordinal) + "'";
+
+    private static async Task InitializeGitProjectAsync(string path)
+    {
+        await GitAsync(path, ["init", "--initial-branch=main"]);
+        await GitAsync(path, ["config", "user.name", "Test Human"]);
+        await GitAsync(path, ["config", "user.email", "human@example.test"]);
+    }
+
+    private static async Task<string> GitAsync(
+        string path,
+        IReadOnlyList<string> arguments)
+    {
+        var startInfo = new ProcessStartInfo("git")
+        {
+            RedirectStandardError = true,
+            RedirectStandardOutput = true,
+            UseShellExecute = false,
+        };
+        startInfo.ArgumentList.Add("-C");
+        startInfo.ArgumentList.Add(path);
+        foreach (var argument in arguments)
+        {
+            startInfo.ArgumentList.Add(argument);
+        }
+
+        using var process = Process.Start(startInfo) ??
+            throw new InvalidOperationException("Could not start Git.");
+        var output = await process.StandardOutput.ReadToEndAsync();
+        var error = await process.StandardError.ReadToEndAsync();
+        await process.WaitForExitAsync();
+        Assert.True(process.ExitCode == 0, error);
+        return output.Trim();
+    }
 
     private sealed class TemporaryDirectory : IDisposable
     {

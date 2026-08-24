@@ -48,7 +48,8 @@ public sealed record FileEditReceipt(
 public sealed record AtomicFileEditResult(
     IReadOnlyList<FileEditReceipt> Files,
     string? CommitSubject,
-    string? CommitBody);
+    string? CommitBody,
+    ProjectCommitReceipt? Commit = null);
 
 public sealed class AtomicFileEditException : Exception
 {
@@ -109,6 +110,28 @@ public sealed class AtomicFileEditor
                 candidate.Operations.Select(operation => operation.Kind).ToArray())).ToArray(),
             batch.CommitSubject,
             batch.CommitBody);
+    }
+
+    public static IReadOnlyList<string> ResolvePaths(AtomicFileEditBatch batch)
+    {
+        ArgumentNullException.ThrowIfNull(batch);
+        if (batch.Operations.Count == 0)
+        {
+            throw new AtomicFileEditException("An atomic file edit batch must contain an operation.");
+        }
+
+        var root = string.IsNullOrWhiteSpace(batch.RootPath)
+            ? null
+            : Path.GetFullPath(batch.RootPath);
+        return batch.Operations
+            .Select(operation =>
+            {
+                ArgumentException.ThrowIfNullOrWhiteSpace(operation.Path);
+                return ResolvePath(operation.Path, root);
+            })
+            .Distinct(PathComparer)
+            .Order(PathComparer)
+            .ToArray();
     }
 
     private static List<FileCandidate> BuildCandidates(

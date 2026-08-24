@@ -2,6 +2,8 @@ using System.Globalization;
 using System.Management.Automation;
 using System.Text.Json;
 using Deckwraith.Application.Files;
+using Deckwraith.Core.Naming;
+using Deckwraith.Core.State;
 using Deckwraith.PowerShell.Serialization;
 
 namespace Deckwraith.PowerShell.Cmdlets;
@@ -29,13 +31,64 @@ public sealed class InvokeDwFileEditCommand : DwCmdlet
     {
         try
         {
-            var root = MyInvocation.BoundParameters.ContainsKey(nameof(RootPath))
+            var session = RuntimeSession;
+            var operations = Operation.Select(ParseOperation).ToArray();
+            var rootWasSpecified = MyInvocation.BoundParameters.ContainsKey(nameof(RootPath));
+            var root = rootWasSpecified
                 ? RootPath
                 : SessionState.Path.CurrentFileSystemLocation.Path;
-            var operations = Operation.Select(ParseOperation).ToArray();
+            HauntProjectPolicy? project = null;
+            CanonicalName? resolvedHaunt = null;
+            if (session.DeckState is not null && session.Invocation.Haunt is { } haunt)
+            {
+                resolvedHaunt = session.DeckState.ResolveHauntAsync(
+                    CanonicalName.Parse(haunt), CancellationToken.None).GetAwaiter().GetResult();
+                project = session.DeckState.ReadHauntAsync(
+                    resolvedHaunt.Value, CancellationToken.None).GetAwaiter().GetResult().Project;
+                if (!rootWasSpecified && project is not null)
+                {
+                    root = project.ProjectPath;
+                }
+            }
+
+            var batch = new AtomicFileEditBatch(
+                operations, root, CommitSubject, CommitBody);
+            ProjectCommitPreparation? preparation = null;
+            if (project?.AutoCommitEnabled is true)
+            {
+                if (session.ProjectCommitter is null)
+                {
+                    throw new ProjectCommitException(
+                        "This hosted runspace cannot create project commits.");
+                }
+
+                if (string.IsNullOrWhiteSpace(CommitSubject))
+                {
+                    throw new ProjectCommitException(
+                        "This haunt requires an edit-authored CommitSubject for automatic commits.");
+                }
+
+                preparation = session.ProjectCommitter.PrepareAsync(
+                    project,
+                    CanonicalName.Parse(session.Invocation.Wraith),
+                    resolvedHaunt ?? throw new ProjectCommitException(
+                        "Automatic project commits require a current haunt."),
+                    CommitSubject,
+                    CommitBody,
+                    AtomicFileEditor.ResolvePaths(batch),
+                    CancellationToken.None).GetAwaiter().GetResult();
+            }
+
             var result = AtomicFileEditor.ApplyAsync(
-                new AtomicFileEditBatch(operations, root, CommitSubject, CommitBody),
+                batch,
                 CancellationToken.None).GetAwaiter().GetResult();
+            if (preparation is not null)
+            {
+                var commit = session.ProjectCommitter!.CommitAsync(
+                    preparation, result.Files, CancellationToken.None).GetAwaiter().GetResult();
+                result = result with { Commit = commit };
+            }
+
             WriteObject(result);
         }
         catch (Exception exception) when (exception is not PipelineStoppedException)

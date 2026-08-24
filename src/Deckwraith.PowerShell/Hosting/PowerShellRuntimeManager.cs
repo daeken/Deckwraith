@@ -4,6 +4,7 @@ using System.Management.Automation.Runspaces;
 using System.Reflection;
 using System.Security.Cryptography;
 using Deckwraith.Application.Abstractions;
+using Deckwraith.Application.Files;
 using Deckwraith.Application.State;
 using Deckwraith.Core.Archives;
 using Deckwraith.Core.Naming;
@@ -27,6 +28,8 @@ public sealed class PowerShellRuntimeManager : IDisposable
     private readonly IAgentArchive _archive;
     private readonly ICheckpointStore _checkpoints;
     private readonly IDeckClock _clock;
+    private readonly IDeckStateStore? _deckState;
+    private readonly IProjectCommitter? _projectCommitter;
     private readonly McpCatalogRuntime? _mcp;
     private readonly bool _ownsMcp;
     private readonly ConcurrentDictionary<string, WraithPowerShellSession> _sessions =
@@ -40,7 +43,9 @@ public sealed class PowerShellRuntimeManager : IDisposable
         ICheckpointStore checkpoints,
         IDeckClock? clock = null,
         McpCatalogRuntime? mcp = null,
-        bool ownsMcp = false)
+        bool ownsMcp = false,
+        IDeckStateStore? deckState = null,
+        IProjectCommitter? projectCommitter = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(rootPath);
         _rootPath = Path.GetFullPath(rootPath);
@@ -51,6 +56,8 @@ public sealed class PowerShellRuntimeManager : IDisposable
         _clock = clock ?? SystemDeckClock.Instance;
         _mcp = mcp;
         _ownsMcp = ownsMcp;
+        _deckState = deckState;
+        _projectCommitter = projectCommitter;
     }
 
     public Task<PowerShellExecutionResult> ExecuteAsync(
@@ -121,7 +128,9 @@ public sealed class PowerShellRuntimeManager : IDisposable
             _checkpoints,
             _clock,
             _mcp,
-            catalog);
+            catalog,
+            _deckState,
+            _projectCommitter);
         var selected = _sessions.GetOrAdd(wraith.Value, created);
         if (!ReferenceEquals(selected, created))
         {
@@ -169,7 +178,9 @@ public sealed class PowerShellRuntimeManager : IDisposable
             ICheckpointStore checkpoints,
             IDeckClock clock,
             McpCatalogRuntime? mcp,
-            McpEffectiveCatalog? catalog)
+            McpEffectiveCatalog? catalog,
+            IDeckStateStore? deckState,
+            IProjectCommitter? projectCommitter)
         {
             _rootPath = rootPath;
             _wraith = wraith;
@@ -187,7 +198,13 @@ public sealed class PowerShellRuntimeManager : IDisposable
                 catalog?.ContentHash,
                 DescribeMcpTools(catalog));
             _sessionContext = new PowerShellSessionContext(
-                durableState, artifacts, mcp, catalog, () => _info);
+                durableState,
+                artifacts,
+                mcp,
+                catalog,
+                deckState,
+                projectCommitter,
+                () => _info);
             var candidate = BuildCandidate(catalog);
             _runspace = candidate.Runspace;
             _info = _info with { Tools = candidate.Tools };
