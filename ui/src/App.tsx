@@ -58,6 +58,7 @@ export function App() {
   const [providerAccess, setProviderAccess] = useState<ProviderSnapshot[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const eventRefreshTimer = useRef(0);
 
   const refresh = useCallback(async () => {
     try {
@@ -117,6 +118,14 @@ export function App() {
     }
   }, [selectedHaunt, selectedWraith]);
 
+  const scheduleEventRefresh = useCallback(() => {
+    globalThis.clearTimeout(eventRefreshTimer.current);
+    eventRefreshTimer.current = globalThis.setTimeout(() => {
+      eventRefreshTimer.current = 0;
+      void refresh();
+    }, 80);
+  }, [refresh]);
+
   const updateProviderAuthentication = useCallback((authentication: ProviderAuthenticationStatus) => {
     setProviderAccess((current) => current.map((provider) =>
       provider.providerId === authentication.providerId
@@ -140,12 +149,20 @@ export function App() {
 
   useEffect(() => {
     if (!initialized || !deck) return;
-    return subscribe(
+    const unsubscribe = subscribe(
       deck.eventCursor,
-      (event) => setEvents((current) => [...current.slice(-79), event]),
+      (event) => {
+        setEvents((current) => [...current.slice(-79), event]);
+        scheduleEventRefresh();
+      },
       refresh,
     );
-  }, [initialized]); // eslint-disable-line react-hooks/exhaustive-deps
+    return () => {
+      unsubscribe();
+      globalThis.clearTimeout(eventRefreshTimer.current);
+      eventRefreshTimer.current = 0;
+    };
+  }, [initialized, refresh, scheduleEventRefresh]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (initialized) void refresh();
@@ -568,6 +585,8 @@ function ConversationPanel({ context, identity, runs, providers, wraith, haunt, 
   const [turnActive, setTurnActive] = useState(false);
   const [turnStopping, setTurnStopping] = useState(false);
   const turnController = useRef<AbortController | null>(null);
+  const conversationViewport = useRef<HTMLDivElement | null>(null);
+  const followConversation = useRef(true);
   const active = [...runs].reverse().find((run) => !isTerminalRun(run));
   const focusedHaunt = active?.haunt ?? haunt;
   const items = context?.items ?? [];
@@ -576,10 +595,21 @@ function ConversationPanel({ context, identity, runs, providers, wraith, haunt, 
   const modelLabel = active?.shells.at(-1)?.model ?? model;
   const displayName = identity.name;
   const authentication = providers.find((item) => item.providerId === provider)?.authentication;
+  const lastItemId = items.at(-1)?.itemId;
+
+  useEffect(() => {
+    const viewport = conversationViewport.current;
+    if (!viewport || !followConversation.current) return;
+    const frame = globalThis.requestAnimationFrame(() => {
+      viewport.scrollTop = viewport.scrollHeight;
+    });
+    return () => globalThis.cancelAnimationFrame(frame);
+  }, [items.length, lastItemId]);
 
   const send = () => {
     if (turnController.current) return Promise.resolve();
     const controller = new AbortController();
+    followConversation.current = true;
     turnController.current = controller;
     setTurnActive(true);
     setTurnStopping(false);
@@ -634,7 +664,11 @@ function ConversationPanel({ context, identity, runs, providers, wraith, haunt, 
     </div>
 
     <ScrollArea.Root className="conversation-scroll">
-      <ScrollArea.Viewport>
+      <ScrollArea.Viewport ref={conversationViewport} onScroll={(event) => {
+        const viewport = event.currentTarget;
+        followConversation.current =
+          viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight < 80;
+      }}>
         <div className="conversation-thread" aria-live="polite">
           {items.length ? items.map((item) => <ContextItemView
             key={item.itemId}
