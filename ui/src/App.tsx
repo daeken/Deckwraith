@@ -59,6 +59,10 @@ export function App() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const eventRefreshTimer = useRef(0);
+  const activeRun = wraith ? [...wraith.runs].reverse().find((run) => !isTerminalRun(run)) : undefined;
+  const conversationHaunt = activeRun?.haunt ?? selectedHaunt;
+  const conversationDefaultPath = deck?.haunts.find((item) => item.name === conversationHaunt)
+    ?.project?.projectPath ?? deckPath;
 
   const refresh = useCallback(async () => {
     try {
@@ -443,8 +447,7 @@ export function App() {
                 providers={providerAccess}
                 wraith={selectedWraith}
                 haunt={selectedHaunt}
-                defaultPath={deck?.haunts.find((item) => item.name === selectedHaunt)?.project
-                  ?.projectPath ?? deckPath}
+                defaultPath={conversationDefaultPath}
                 busy={busy}
                 mutate={mutate}
                 onProviderAuthentication={updateProviderAuthentication}

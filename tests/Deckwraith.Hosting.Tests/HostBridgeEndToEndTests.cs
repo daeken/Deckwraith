@@ -494,6 +494,38 @@ public sealed class HostBridgeEndToEndTests
             Assert.Equal(
                 "cancelled",
                 terminal.Payload.GetProperty("finishReason").GetString());
+
+            var snapshot = await host.ExecuteAsync(Query(
+                "wraith.snapshot", new { wraith = "steward" }, "cancelled-wraith-snapshot"));
+            AssertSuccess(snapshot);
+            var cancelledRun = Assert.Single(
+                snapshot.Result!.Value.GetProperty("runs").EnumerateArray(),
+                run => run.GetProperty("runId").GetString() == runId);
+            Assert.Equal("cancelled", cancelledRun.GetProperty("status").GetString());
+            Assert.Equal(
+                "run-cancelled",
+                cancelledRun.GetProperty("shells")[0].GetProperty("endReason").GetString());
+            var context = snapshot.Result.Value.GetProperty("context");
+            Assert.Equal(0, context.GetProperty("turn").GetInt64());
+            var userMessage = Assert.Single(context.GetProperty("items").EnumerateArray());
+            Assert.Equal("user", userMessage.GetProperty("role").GetString());
+            Assert.Equal("Please wait.", userMessage.GetProperty("text").GetString());
+
+            var restarted = await host.ExecuteAsync(Command(
+                "run.start",
+                new
+                {
+                    wraith = "steward",
+                    haunt = "setup",
+                    objective = "continue after a safe stop",
+                    provider = "blocking",
+                    model = "blocking-model",
+                },
+                "restart-after-cancel"));
+            AssertSuccess(restarted);
+            Assert.NotEqual(
+                runId,
+                restarted.Result!.Value.GetProperty("run").GetProperty("runId").GetString());
         }
         finally
         {
