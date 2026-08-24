@@ -207,7 +207,7 @@ export function App() {
       <main>
         <header className="topbar">
           <div>
-            <span className="eyebrow">Persistent identity</span>
+            <span className="eyebrow">Wraith</span>
             <h1>{wraith?.identity.name ?? "No wraith selected"}</h1>
           </div>
           <div className="topbar-meta">
@@ -220,25 +220,22 @@ export function App() {
         {error && <div className="error-banner"><b>Something snagged.</b> {error}</div>}
 
         {wraith ? (
-          <Tabs.Root className="workspace-tabs" defaultValue="identity">
+          <Tabs.Root className="workspace-tabs" defaultValue="runs">
             <Tabs.List className="tab-list">
               {[
-                ["identity", "Identity"],
                 ["runs", "Runs"],
                 ["deckbook", "Deckbook"],
                 ["archive", "Archive"],
                 ["checkpoints", "Checkpoints"],
+                ["identity", "Identity file"],
               ].map(([value, label]) => (
                 <Tabs.Trigger key={value} className="tab-trigger" value={value}>{label}</Tabs.Trigger>
               ))}
             </Tabs.List>
             <Tabs.Content className="tab-content" value="identity">
-              <IdentityEditor
+              <IdentityRecord
                 identity={wraith.identity}
                 busy={busy}
-                onSave={(identity) => mutate(async () => {
-                  await command("identity.update", { wraith: selectedWraith, identity });
-                })}
                 onArchive={() => mutate(async () => {
                   await command("wraith.archive", { wraith: selectedWraith });
                   setSelectedWraith("");
@@ -285,61 +282,72 @@ export function App() {
   );
 }
 
-function IdentityEditor({
+function IdentityRecord({
   identity,
   busy,
-  onSave,
   onArchive,
 }: {
   identity: IdentityDocument;
   busy: boolean;
-  onSave: (identity: IdentityDocument) => Promise<void>;
   onArchive: () => Promise<void>;
 }) {
-  const [draft, setDraft] = useState(identity);
-  useEffect(() => setDraft(identity), [identity]);
-  const set = <K extends keyof IdentityDocument>(key: K, value: IdentityDocument[K]) =>
-    setDraft((current) => ({ ...current, [key]: value }));
-  const setCalibration = (key: string, value: string) =>
-    setDraft((current) => ({
-      ...current,
-      calibration: { ...current.calibration, [key]: value },
-    }));
-
   return (
-    <div className="content-grid identity-grid">
+    <div className="content-grid identity-record">
+      <section className="panel wide identity-intro">
+        <PanelHeading
+          eyebrow="Durable system truth"
+          title="Identity record"
+          detail="Inspect this here. Deliberate changes belong in the JSON file and its Git history, not in a casual form."
+        />
+        <code className="identity-path">agents/{identity.name}/identity.json</code>
+      </section>
       <section className="panel wide">
         <PanelHeading eyebrow="The whole person" title="Personality" detail="Broad identity, not a narrow style prompt." />
-        <textarea className="large-text" value={draft.personality} onChange={(event) => set("personality", event.target.value)} />
+        <IdentityCopy value={identity.personality} />
       </section>
       <section className="panel">
         <PanelHeading eyebrow="Self account" title="Description" />
-        <textarea value={draft.selfDescription} onChange={(event) => set("selfDescription", event.target.value)} />
-        <label>Pronouns<input value={draft.pronouns.join(", ")} onChange={(event) => set("pronouns", commaList(event.target.value))} /></label>
+        <IdentityCopy value={identity.selfDescription} />
+        <div className="identity-subfield"><b>Pronouns</b><IdentityList values={identity.pronouns} /></div>
       </section>
       <section className="panel">
         <PanelHeading eyebrow="Operational calibration" title="Voice & boundaries" />
-        <label>Register<textarea value={draft.calibration.register ?? ""} onChange={(event) => setCalibration("register", event.target.value)} /></label>
-        <label>Opsec<textarea value={draft.calibration.opsec ?? ""} onChange={(event) => setCalibration("opsec", event.target.value)} /></label>
+        {Object.entries(identity.calibration).length ? (
+          <dl className="calibration-list">
+            {Object.entries(identity.calibration).sort(([left], [right]) => left.localeCompare(right)).map(([key, value]) => (
+              <div key={key}><dt>{key}</dt><dd className={clsx(!value && "empty-copy")}>{value || "Not yet written."}</dd></div>
+            ))}
+          </dl>
+        ) : <IdentityCopy value="" />}
       </section>
       <section className="panel">
         <PanelHeading eyebrow="Patterns" title="Known tendencies" />
-        <textarea value={draft.knownTendencies.join("\n")} onChange={(event) => set("knownTendencies", lineList(event.target.value))} />
+        <IdentityList values={identity.knownTendencies} />
       </section>
       <section className="panel">
         <PanelHeading eyebrow="Still becoming" title="Open questions" />
-        <textarea value={draft.openQuestions.join("\n")} onChange={(event) => set("openQuestions", lineList(event.target.value))} />
+        <IdentityList values={identity.openQuestions} />
       </section>
-      <div className="action-row wide">
+      <div className="action-row wide identity-actions">
+        <span>Schema {identity.schemaVersion} · last updated {formatDate(identity.updatedAt)}</span>
         <button className="danger" disabled={busy} onClick={() => {
           if (window.confirm(`Archive ${identity.name}? Its history remains local and restorable.`)) {
             void onArchive();
           }
         }}>Archive wraith</button>
-        <button className="primary" disabled={busy} onClick={() => void onSave(draft)}>Checkpoint identity</button>
       </div>
     </div>
   );
+}
+
+function IdentityCopy({ value }: { value: string }) {
+  return <p className={clsx("identity-copy", !value && "empty-copy")}>{value || "Not yet written."}</p>;
+}
+
+function IdentityList({ values }: { values: string[] }) {
+  return values.length
+    ? <ul className="identity-list">{values.map((value) => <li key={value}>{value}</li>)}</ul>
+    : <p className="identity-copy empty-copy">None recorded.</p>;
 }
 
 function RunsPanel({ runs, providers, wraith, haunt, busy, mutate }: {
@@ -495,8 +503,6 @@ function PanelHeading({ eyebrow, title, detail }: { eyebrow: string; title: stri
 
 function Metric({ label, value }: { label: string; value: string }) { return <div className="metric"><span>{label}</span><b>{value}</b></div>; }
 function StatusPill({ value }: { value: string }) { return <span className={clsx("status-pill", value)}>{value}</span>; }
-function lineList(value: string) { return value.split("\n").map((item) => item.trim()).filter(Boolean); }
-function commaList(value: string) { return value.split(",").map((item) => item.trim()).filter(Boolean); }
 function shortId(value: string) { return value.slice(0, 10); }
 function formatDate(value: string) { return new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(new Date(value)); }
 function messageOf(value: unknown) { return value instanceof Error ? value.message : String(value); }
