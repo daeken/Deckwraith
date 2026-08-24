@@ -23,11 +23,12 @@ public sealed class PowerShellDeckbookEndToEndTests
         var deckState = new JsonDeckStateStore(temporaryDirectory.Path);
         var archive = new JsonlAgentArchive(temporaryDirectory.Path);
         var checkpoints = new GitCheckpointStore(temporaryDirectory.Path);
+        var artifactStore = new ContentAddressedArtifactStore(temporaryDirectory.Path);
         var clock = new FixedClock();
         using (var state = new StateSpine(
             deckState,
             archive,
-            new ContentAddressedArtifactStore(temporaryDirectory.Path),
+            artifactStore,
             checkpoints,
             clock))
         {
@@ -42,9 +43,12 @@ public sealed class PowerShellDeckbookEndToEndTests
             archive,
             checkpoints,
             clock);
+        var artifactRuntime = new ArtifactRuntime(
+            deckState, artifactStore, archive, checkpoints, clock);
         using var runspaces = new PowerShellRuntimeManager(
             temporaryDirectory.Path,
             durableState,
+            artifactRuntime,
             archive,
             checkpoints,
             clock);
@@ -158,11 +162,12 @@ public sealed class PowerShellDeckbookEndToEndTests
         var deckState = new JsonDeckStateStore(temporaryDirectory.Path);
         var archive = new JsonlAgentArchive(temporaryDirectory.Path);
         var checkpoints = new GitCheckpointStore(temporaryDirectory.Path);
+        var artifactStore = new ContentAddressedArtifactStore(temporaryDirectory.Path);
         var clock = new FixedClock();
         using (var state = new StateSpine(
             deckState,
             archive,
-            new ContentAddressedArtifactStore(temporaryDirectory.Path),
+            artifactStore,
             checkpoints,
             clock))
         {
@@ -177,9 +182,12 @@ public sealed class PowerShellDeckbookEndToEndTests
             archive,
             checkpoints,
             clock);
+        var artifactRuntime = new ArtifactRuntime(
+            deckState, artifactStore, archive, checkpoints, clock);
         using var runspaces = new PowerShellRuntimeManager(
             temporaryDirectory.Path,
             durableState,
+            artifactRuntime,
             archive,
             checkpoints,
             clock);

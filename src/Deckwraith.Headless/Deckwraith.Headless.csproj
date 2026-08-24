@@ -8,6 +8,7 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="../Deckwraith.Application/Deckwraith.Application.csproj" />
+    <ProjectReference Include="../Deckwraith.Kernels.CSharp/Deckwraith.Kernels.CSharp.csproj" />
     <ProjectReference Include="../Deckwraith.Kernels.PowerShell/Deckwraith.Kernels.PowerShell.csproj" />
     <ProjectReference Include="../Deckwraith.Notebooks/Deckwraith.Notebooks.csproj" />
     <ProjectReference Include="../Deckwraith.Persistence/Deckwraith.Persistence.csproj" />

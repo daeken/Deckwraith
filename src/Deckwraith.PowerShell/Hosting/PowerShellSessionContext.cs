@@ -8,14 +8,18 @@ internal sealed class PowerShellSessionContext
 
     public PowerShellSessionContext(
         DurableStateRuntime durableState,
+        ArtifactRuntime artifactRuntime,
         Func<PowerShellRuntimeInfo> getRuntimeInfo)
     {
         DurableState = durableState;
+        Artifacts = artifactRuntime;
         GetRuntimeInfo = getRuntimeInfo;
         Invocation = new PowerShellInvocationContext(string.Empty);
     }
 
     public DurableStateRuntime DurableState { get; }
+
+    public ArtifactRuntime Artifacts { get; }
 
     public Func<PowerShellRuntimeInfo> GetRuntimeInfo { get; }
 

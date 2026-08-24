@@ -2,11 +2,13 @@
 using Deckwraith.Application.Inference;
 using Deckwraith.Application.State;
 using Deckwraith.Kernels.Abstractions;
+using Deckwraith.Kernels.CSharp;
 using Deckwraith.Kernels.PowerShell;
 using Deckwraith.Notebooks;
 using Deckwraith.Notebooks.Model;
 using Deckwraith.Persistence;
 using Deckwraith.Persistence.Archives;
+using Deckwraith.Persistence.Artifacts;
 using Deckwraith.Persistence.Git;
 using Deckwraith.Persistence.State;
 using Deckwraith.PowerShell.Hosting;
@@ -229,13 +231,18 @@ internal static class DeckwraithCli
         var deckState = new JsonDeckStateStore(rootPath);
         var archive = new JsonlAgentArchive(rootPath);
         var checkpoints = new GitCheckpointStore(rootPath);
+        var artifactRuntime = new ArtifactRuntime(
+            deckState,
+            new ContentAddressedArtifactStore(rootPath),
+            archive,
+            checkpoints);
         var durableState = new DurableStateRuntime(
             deckState,
             new JsonDurableValueStore(rootPath),
             archive,
             checkpoints);
         using var manager = new PowerShellRuntimeManager(
-            rootPath, durableState, archive, checkpoints);
+            rootPath, durableState, artifactRuntime, archive, checkpoints);
         var result = await manager.ExecuteAsync(
             new PowerShellInvocationContext(
                 arguments[2],
@@ -365,25 +372,33 @@ internal static class DeckwraithCli
     private sealed class NotebookComposition : IDisposable
     {
         private readonly PowerShellRuntimeManager _runspaces;
-        private readonly PowerShellCellKernel _kernel;
+        private readonly PowerShellCellKernel _powerShellKernel;
+        private readonly CSharpCellKernel _csharpKernel;
 
         public NotebookComposition(string rootPath)
         {
             var deckState = new JsonDeckStateStore(rootPath);
             var archive = new JsonlAgentArchive(rootPath);
             var checkpoints = new GitCheckpointStore(rootPath);
+            var artifactRuntime = new ArtifactRuntime(
+                deckState,
+                new ContentAddressedArtifactStore(rootPath),
+                archive,
+                checkpoints);
             var durableState = new DurableStateRuntime(
                 deckState,
                 new JsonDurableValueStore(rootPath),
                 archive,
                 checkpoints);
             _runspaces = new PowerShellRuntimeManager(
-                rootPath, durableState, archive, checkpoints);
-            _kernel = new PowerShellCellKernel(_runspaces);
+                rootPath, durableState, artifactRuntime, archive, checkpoints);
+            _powerShellKernel = new PowerShellCellKernel(_runspaces);
+            _csharpKernel = new CSharpCellKernel(
+                durableState, artifactRuntime, archive, checkpoints);
             Notebooks = new DeckbookRuntime(
                 rootPath,
                 deckState,
-                new CellKernelRegistry([_kernel]),
+                new CellKernelRegistry([_powerShellKernel, _csharpKernel]),
                 archive,
                 checkpoints);
         }
@@ -393,7 +408,8 @@ internal static class DeckwraithCli
         public void Dispose()
         {
             Notebooks.Dispose();
-            _kernel.Dispose();
+            _csharpKernel.Dispose();
+            _powerShellKernel.Dispose();
             _runspaces.Dispose();
         }
     }

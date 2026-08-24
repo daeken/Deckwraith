@@ -4,12 +4,14 @@ using Deckwraith.Application.State;
 using Deckwraith.Core.Serialization;
 using Deckwraith.Kernels.Abstractions;
 using Deckwraith.Kernels.CSharp;
+using Deckwraith.Kernels.PowerShell;
 using Deckwraith.Notebooks;
 using Deckwraith.Notebooks.Model;
 using Deckwraith.Persistence.Archives;
 using Deckwraith.Persistence.Artifacts;
 using Deckwraith.Persistence.Git;
 using Deckwraith.Persistence.State;
+using Deckwraith.PowerShell.Hosting;
 
 namespace Deckwraith.Kernels.ContractTests;
 
@@ -150,6 +152,102 @@ public sealed class CSharpDeckbookEndToEndTests
             "deckwraith",
             "outputs",
             retainedOutput[7..] + ".json")));
+        Assert.Equal(string.Empty, await RunGitAsync(
+            temporaryDirectory.Path, ["status", "--porcelain"]));
+    }
+
+    [Fact]
+    public async Task PowerShellAndCSharpExchangeCanonicalValuesAndArtifacts()
+    {
+        using var temporaryDirectory = new TemporaryDirectory();
+        var deckState = new JsonDeckStateStore(temporaryDirectory.Path);
+        var archive = new JsonlAgentArchive(temporaryDirectory.Path);
+        var checkpoints = new GitCheckpointStore(temporaryDirectory.Path);
+        var artifactStore = new ContentAddressedArtifactStore(temporaryDirectory.Path);
+        var clock = new FixedClock();
+        using (var state = new StateSpine(
+            deckState,
+            archive,
+            artifactStore,
+            checkpoints,
+            clock))
+        {
+            await state.InitializeAsync(CancellationToken.None);
+            await state.CreateHauntAsync("deckwraith", CancellationToken.None);
+            await state.CreateWraithAsync("wraith1", CancellationToken.None);
+        }
+
+        var durableState = new DurableStateRuntime(
+            deckState,
+            new JsonDurableValueStore(temporaryDirectory.Path),
+            archive,
+            checkpoints,
+            clock);
+        var artifactRuntime = new ArtifactRuntime(
+            deckState, artifactStore, archive, checkpoints, clock);
+        using var runspaces = new PowerShellRuntimeManager(
+            temporaryDirectory.Path,
+            durableState,
+            artifactRuntime,
+            archive,
+            checkpoints,
+            clock);
+        using var powerShell = new PowerShellCellKernel(runspaces);
+        using var csharp = new CSharpCellKernel(
+            durableState, artifactRuntime, archive, checkpoints, clock);
+        using var notebooks = new DeckbookRuntime(
+            temporaryDirectory.Path,
+            deckState,
+            new CellKernelRegistry([powerShell, csharp]),
+            archive,
+            checkpoints,
+            clock);
+
+        await notebooks.InsertAsync(
+            "wraith1",
+            "deckwraith",
+            new InsertDeckbookCell(
+                "publish-value",
+                DeckbookCellKind.Code,
+                "await Dw.SetStateAsync(\"cross-value\", new { answer = 42 }, " +
+                "expectedVersion: 0); \"published\"",
+                "csharp"));
+        await notebooks.InsertAsync(
+            "wraith1",
+            "deckwraith",
+            new InsertDeckbookCell(
+                "publish-artifact",
+                DeckbookCellKind.Code,
+                "$value = Get-DwState -Name 'cross-value' -Scope Agent\n" +
+                "$artifact = Set-DwArtifact -Content 'from powershell' " +
+                "-MediaType 'text/plain; charset=utf-8'\n" +
+                "Set-DwState -Name 'artifact-hash' -Value $artifact.Hash " +
+                "-Scope Agent -ExpectedVersion 0 | Out-Null\n" +
+                "[pscustomobject]@{ answer = [int]$value.answer; artifact = $artifact.Hash }",
+                "powershell"));
+        await notebooks.InsertAsync(
+            "wraith1",
+            "deckwraith",
+            new InsertDeckbookCell(
+                "consume-artifact",
+                DeckbookCellKind.Code,
+                "var stored = await Dw.GetStateAsync(\"artifact-hash\"); " +
+                "var hash = stored!.Value.GetString()!; " +
+                "new { hash, text = await Dw.ReadArtifactTextAsync(hash) }",
+                "csharp"));
+
+        var result = await notebooks.RunRemainingAsync(
+            "wraith1", "deckwraith", "publish-value");
+
+        Assert.True(result.Completed);
+        Assert.Equal(3, result.Executions.Count);
+        var powerShellValue = result.Executions[1].Output.Values[^1];
+        Assert.Equal(42, powerShellValue.GetProperty("answer").GetInt32());
+        var artifactHash = powerShellValue.GetProperty("artifact").GetString();
+        Assert.StartsWith("sha256:", artifactHash, StringComparison.Ordinal);
+        var csharpValue = result.Executions[2].Output.Values[^1];
+        Assert.Equal(artifactHash, csharpValue.GetProperty("hash").GetString());
+        Assert.Equal("from powershell", csharpValue.GetProperty("text").GetString());
         Assert.Equal(string.Empty, await RunGitAsync(
             temporaryDirectory.Path, ["status", "--porcelain"]));
     }

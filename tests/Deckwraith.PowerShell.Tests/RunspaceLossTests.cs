@@ -24,11 +24,12 @@ public sealed class RunspaceLossTests
         var inferenceState = new JsonInferenceStateStore(temporaryDirectory.Path);
         var archive = new JsonlAgentArchive(temporaryDirectory.Path);
         var checkpoints = new GitCheckpointStore(temporaryDirectory.Path);
+        var artifactStore = new ContentAddressedArtifactStore(temporaryDirectory.Path);
         var clock = new FixedClock();
         using (var state = new StateSpine(
             deckState,
             archive,
-            new ContentAddressedArtifactStore(temporaryDirectory.Path),
+            artifactStore,
             checkpoints,
             clock))
         {
@@ -68,9 +69,12 @@ public sealed class RunspaceLossTests
             archive,
             checkpoints,
             clock);
+        var artifactRuntime = new ArtifactRuntime(
+            deckState, artifactStore, archive, checkpoints, clock);
         using var manager = new PowerShellRuntimeManager(
             temporaryDirectory.Path,
             durableState,
+            artifactRuntime,
             archive,
             checkpoints,
             clock);

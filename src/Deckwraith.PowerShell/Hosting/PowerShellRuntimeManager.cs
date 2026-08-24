@@ -15,6 +15,7 @@ public sealed class PowerShellRuntimeManager : IDisposable
 {
     private readonly string _rootPath;
     private readonly DurableStateRuntime _durableState;
+    private readonly ArtifactRuntime _artifacts;
     private readonly IAgentArchive _archive;
     private readonly ICheckpointStore _checkpoints;
     private readonly IDeckClock _clock;
@@ -24,6 +25,7 @@ public sealed class PowerShellRuntimeManager : IDisposable
     public PowerShellRuntimeManager(
         string rootPath,
         DurableStateRuntime durableState,
+        ArtifactRuntime artifacts,
         IAgentArchive archive,
         ICheckpointStore checkpoints,
         IDeckClock? clock = null)
@@ -31,6 +33,7 @@ public sealed class PowerShellRuntimeManager : IDisposable
         ArgumentException.ThrowIfNullOrWhiteSpace(rootPath);
         _rootPath = Path.GetFullPath(rootPath);
         _durableState = durableState;
+        _artifacts = artifacts;
         _archive = archive;
         _checkpoints = checkpoints;
         _clock = clock ?? SystemDeckClock.Instance;
@@ -76,6 +79,7 @@ public sealed class PowerShellRuntimeManager : IDisposable
                 _rootPath,
                 wraith,
                 _durableState,
+                _artifacts,
                 _archive,
                 _checkpoints,
                 _clock));
@@ -107,6 +111,7 @@ public sealed class PowerShellRuntimeManager : IDisposable
             string rootPath,
             CanonicalName wraith,
             DurableStateRuntime durableState,
+            ArtifactRuntime artifacts,
             IAgentArchive archive,
             ICheckpointStore checkpoints,
             IDeckClock clock)
@@ -117,7 +122,8 @@ public sealed class PowerShellRuntimeManager : IDisposable
             _checkpoints = checkpoints;
             _clock = clock;
             _info = new PowerShellRuntimeInfo(wraith.Value, 1, clock.UtcNow, false, []);
-            _sessionContext = new PowerShellSessionContext(durableState, () => _info);
+            _sessionContext = new PowerShellSessionContext(
+                durableState, artifacts, () => _info);
             var candidate = BuildCandidate();
             _runspace = candidate.Runspace;
             _info = _info with { Tools = candidate.Tools };
@@ -281,6 +287,8 @@ public sealed class PowerShellRuntimeManager : IDisposable
             AddCmdlet<GetDwStateCommand>(initialState, "Get-DwState");
             AddCmdlet<SetDwStateCommand>(initialState, "Set-DwState");
             AddCmdlet<RemoveDwStateCommand>(initialState, "Remove-DwState");
+            AddCmdlet<GetDwArtifactCommand>(initialState, "Get-DwArtifact");
+            AddCmdlet<SetDwArtifactCommand>(initialState, "Set-DwArtifact");
             AddCmdlet<GetDwRuntimeCommand>(initialState, "Get-DwRuntime");
             AddCmdlet<GetDwToolCommand>(initialState, "Get-DwTool");
             AddCmdlet<ReloadDwToolsCommand>(initialState, "Update-DwTools");
