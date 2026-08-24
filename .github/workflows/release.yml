@@ -51,17 +51,17 @@ jobs:
       - name: Package Electron application
         shell: bash
         run: ./eng/package-desktop.sh "${{ steps.version.outputs.value }}"
+      - name: Stage release distributables
+        shell: bash
+        run: >-
+          ./eng/stage-release-artifacts.sh
+          src/Deckwraith.Desktop/obj/artifacts/desktop
+          artifacts/release
+          "${{ matrix.target }}"
       - uses: actions/upload-artifact@v4
         with:
           name: deckwraith-${{ matrix.target }}-${{ steps.version.outputs.value }}
-          path: |
-            src/Deckwraith.Desktop/obj/artifacts/desktop/*.AppImage
-            src/Deckwraith.Desktop/obj/artifacts/desktop/*.dmg
-            src/Deckwraith.Desktop/obj/artifacts/desktop/*.exe
-            src/Deckwraith.Desktop/obj/artifacts/desktop/*.zip
-            src/Deckwraith.Desktop/obj/artifacts/desktop/*.tar.gz
-            src/Deckwraith.Desktop/obj/artifacts/desktop/*.blockmap
-            src/Deckwraith.Desktop/obj/artifacts/desktop/latest*.yml
+          path: artifacts/release/*
           if-no-files-found: error
 
   publish:
@@ -73,6 +73,25 @@ jobs:
         with:
           path: artifacts
           merge-multiple: true
+      - name: Remove an incomplete release before publication
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          set +e
+          deckwraith_lookup="$(gh api \
+            "repos/${GITHUB_REPOSITORY}/releases/tags/${GITHUB_REF_NAME}" \
+            --jq .id 2>&1)"
+          deckwraith_status=$?
+          set -e
+          if [[ "$deckwraith_status" -eq 0 ]]; then
+            gh api --method DELETE \
+              "repos/${GITHUB_REPOSITORY}/releases/${deckwraith_lookup}"
+          elif [[ "$deckwraith_lookup" != *"HTTP 404"* ]]; then
+            echo "$deckwraith_lookup" >&2
+            exit "$deckwraith_status"
+          fi
       - name: Publish GitHub release
         id: publish_release
         continue-on-error: true
