@@ -35,6 +35,16 @@ public sealed class GitCheckpointStore : ICheckpointStore
                 "Deck initialization refuses an existing Git repository with remotes; state is credential-equivalent data.");
         }
 
+        // A checkpoint is not complete while Git can still be repacking the deck in
+        // a detached maintenance process. Keep automatic maintenance synchronous so
+        // lifecycle operations never race background mutations of .git/objects.
+        await RunGitAsync(
+            ["config", "--local", "gc.autoDetach", "false"], cancellationToken)
+            .ConfigureAwait(false);
+        await RunGitAsync(
+            ["config", "--local", "maintenance.autoDetach", "false"], cancellationToken)
+            .ConfigureAwait(false);
+
         SensitiveFilePermissions.RestrictTree(_rootPath);
     }
 
