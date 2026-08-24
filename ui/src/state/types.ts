@@ -95,9 +95,37 @@ export type RunDocument = {
   updatedAt: string;
 };
 
+export type ContextItem = {
+  itemId: string;
+  kind: "message" | "toolInteraction" | "toolElision" | "compaction";
+  role: "system" | "user" | "assistant" | "tool" | null;
+  text: string | null;
+  operationId: string | null;
+  tool: string | null;
+  status: string | null;
+  completedAtTurn: number | null;
+  input: unknown;
+  output: unknown;
+  archiveFirstSequence: number;
+  archiveLastSequence: number;
+};
+
+export type CurrentContextDocument = {
+  schemaVersion: number;
+  agent: string;
+  revision: number;
+  turn: number;
+  archiveFrontier: number;
+  identityHash: string;
+  deckbookRevision: number;
+  toolElisionTurns: number;
+  items: ContextItem[];
+  updatedAt: string;
+};
+
 export type WraithSnapshot = {
   identity: IdentityDocument;
-  context: { turn: number; revision: number; items: unknown[] } | null;
+  context: CurrentContextDocument | null;
   runs: RunDocument[];
   deckbooks: { haunt: string; revision: number; cellCount: number }[];
   eventCursor: number;

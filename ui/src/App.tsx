@@ -10,6 +10,7 @@ import {
   deleteStoredProviderApiKey,
   disconnectOpenAiSession,
   importExistingOpenAiSession,
+  pickConversationAttachments,
   pickDeckFolder,
   pickProjectFolder,
   query,
@@ -20,10 +21,11 @@ import {
   setThemePreference,
   subscribe,
 } from "./ipc/bridge";
-import type { ThemePreference } from "./ipc/bridge";
+import type { ConversationAttachment, ThemePreference } from "./ipc/bridge";
 import type {
   ArchivePage,
   CheckpointSummary,
+  ContextItem,
   DeckSnapshot,
   DeckbookCell,
   DeckbookSnapshot,
@@ -155,6 +157,11 @@ export function App() {
       await action();
       await refresh();
     } catch (reason) {
+      try {
+        await refresh();
+      } catch {
+        // Preserve the original mutation failure; a later event reconnect can recover the view.
+      }
       setError(messageOf(reason));
     } finally {
       setBusy(false);
@@ -388,9 +395,10 @@ export function App() {
         {error && <div className="error-banner"><b>Something snagged.</b> {error}</div>}
 
         {wraith ? (
-          <Tabs.Root className="workspace-tabs" defaultValue="runs">
+          <Tabs.Root className="workspace-tabs" defaultValue="conversation">
             <Tabs.List className="tab-list">
               {[
+                ["conversation", "Conversation"],
                 ["runs", "Runs"],
                 ["deckbook", "Deckbook"],
                 ["archive", "Archive"],
@@ -400,6 +408,20 @@ export function App() {
                 <Tabs.Trigger key={value} className="tab-trigger" value={value}>{label}</Tabs.Trigger>
               ))}
             </Tabs.List>
+            <Tabs.Content className="tab-content conversation-tab" value="conversation">
+              <ConversationPanel
+                context={wraith.context}
+                identity={wraith.identity}
+                runs={wraith.runs}
+                providers={deck?.providers.map((provider) => provider.providerId) ?? []}
+                wraith={selectedWraith}
+                haunt={selectedHaunt}
+                defaultPath={deck?.haunts.find((item) => item.name === selectedHaunt)?.project
+                  ?.projectPath ?? deckPath}
+                busy={busy}
+                mutate={mutate}
+              />
+            </Tabs.Content>
             <Tabs.Content className="tab-content" value="identity">
               <IdentityRecord
                 identity={wraith.identity}
@@ -518,6 +540,164 @@ function IdentityList({ values }: { values: string[] }) {
     : <p className="identity-copy empty-copy">None recorded.</p>;
 }
 
+function ConversationPanel({ context, identity, runs, providers, wraith, haunt, defaultPath, busy, mutate }: {
+  context: WraithSnapshot["context"];
+  identity: IdentityDocument;
+  runs: RunDocument[];
+  providers: string[];
+  wraith: string;
+  haunt: string;
+  defaultPath: string;
+  busy: boolean;
+  mutate: (action: AsyncAction) => Promise<void>;
+}) {
+  const [message, setMessage] = useState("");
+  const [provider, setProvider] = useState("openai-codex-subscription");
+  const [model, setModel] = useState("gpt-5.6-sol");
+  const [attachments, setAttachments] = useState<ConversationAttachment[]>([]);
+  const [attachmentError, setAttachmentError] = useState("");
+  const [picking, setPicking] = useState(false);
+  const active = [...runs].reverse().find((run) => !isTerminalRun(run));
+  const focusedHaunt = active?.haunt ?? haunt;
+  const items = context?.items ?? [];
+  const sendable = !!message.trim() || attachments.length > 0;
+  const providerLabel = active?.shells.at(-1)?.provider ?? provider;
+  const modelLabel = active?.shells.at(-1)?.model ?? model;
+  const displayName = identity.name;
+
+  const send = () => mutate(async () => {
+    const text = conversationMessage(message.trim(), attachments);
+    let runId = active?.runId;
+    if (!runId) {
+      const objective = message.trim().split("\n")[0]?.slice(0, 120) ||
+        `Review attached files in ${focusedHaunt ?? "the current context"}`;
+      const started = await command<{ run: RunDocument }>("run.start", {
+        wraith,
+        haunt: focusedHaunt || null,
+        objective,
+        provider,
+        model,
+      });
+      runId = started.run.runId;
+    }
+
+    await command("run.turn", { wraith, runId, message: text });
+    setMessage("");
+    setAttachments([]);
+    setAttachmentError("");
+  });
+
+  return <div className="conversation-layout">
+    <div className="conversation-presence">
+      <div>
+        <span className={clsx("pulse", active && "active")} />
+        <span><b>{active ? "In conversation" : "Ready to talk"}</b><small>
+          {active
+            ? `${focusedHaunt ? `Focused in ${focusedHaunt} · ` : ""}${providerLabel} / ${modelLabel}`
+            : `${context?.turn ?? 0} durable turn${context?.turn === 1 ? "" : "s"}`}
+        </small></span>
+      </div>
+      {active && <StatusPill value={active.status} />}
+    </div>
+
+    <ScrollArea.Root className="conversation-scroll">
+      <ScrollArea.Viewport>
+        <div className="conversation-thread" aria-live="polite">
+          {items.length ? items.map((item) => <ContextItemView
+            key={item.itemId}
+            item={item}
+            wraithLabel={displayName}
+          />) : <div className="conversation-empty">
+            <div className="sigil">◈</div>
+            <h2>Talk to {displayName}</h2>
+            <p>Say hello, ask a question, steer their attention, or bring in files. Their working context lives here across disposable model shells.</p>
+          </div>}
+        </div>
+      </ScrollArea.Viewport>
+      <ScrollArea.Scrollbar className="scrollbar" orientation="vertical"><ScrollArea.Thumb className="thumb" /></ScrollArea.Scrollbar>
+    </ScrollArea.Root>
+
+    <section className="conversation-composer">
+      {attachments.length > 0 && <div className="attachment-list">{attachments.map((attachment) =>
+        <span className="attachment-chip" key={attachment.hash}>
+          <span><b>{attachment.fileName}</b><small>{formatBytes(attachment.length)}</small></span>
+          <button aria-label={`Remove ${attachment.fileName}`} onClick={() => setAttachments((current) =>
+            current.filter((item) => item.hash !== attachment.hash))}>×</button>
+        </span>)}</div>}
+      <textarea
+        value={message}
+        disabled={busy}
+        onChange={(event) => setMessage(event.target.value)}
+        placeholder={active ? `Say something to ${displayName}…` : `Start a conversation with ${displayName}…`}
+        onKeyDown={(event) => {
+          if (event.key === "Enter" && (event.metaKey || event.ctrlKey) && sendable && !busy) {
+            event.preventDefault();
+            void send();
+          }
+        }}
+      />
+      <div className="composer-actions">
+        <div className="composer-tools">
+          <button className="quiet" disabled={busy || picking || !focusedHaunt} title={focusedHaunt ? "Store selected files as durable artifacts in this haunt" : "Choose a haunt before attaching files"} onClick={() => {
+            if (!focusedHaunt) return;
+            setPicking(true);
+            setAttachmentError("");
+            void pickConversationAttachments(wraith, focusedHaunt, defaultPath)
+              .then((selected) => setAttachments((current) => [
+                ...current,
+                ...selected.filter((candidate) => !current.some((item) => item.hash === candidate.hash)),
+              ]))
+              .catch((reason: unknown) => setAttachmentError(messageOf(reason)))
+              .finally(() => setPicking(false));
+          }}>{picking ? "Attaching…" : "Attach files…"}</button>
+          {!active && <details className="connection-settings">
+            <summary>{providerLabel} · {modelLabel}</summary>
+            <div className="connection-fields">
+              <label>Provider<select value={provider} onChange={(event) => setProvider(event.target.value)}>
+                {providers.map((item) => <option key={item}>{item}</option>)}
+              </select></label>
+              <label>Model<input value={model} onChange={(event) => setModel(event.target.value)} /></label>
+            </div>
+          </details>}
+        </div>
+        <div className="send-cluster"><small>⌘↵ to send</small><button className="primary conversation-send" disabled={busy || !sendable} onClick={() => void send()}>{active ? "Send" : "Start conversation"}</button></div>
+      </div>
+      {attachmentError && <div className="setup-error"><b>Couldn’t attach that.</b> {attachmentError}</div>}
+    </section>
+  </div>;
+}
+
+function ContextItemView({ item, wraithLabel }: { item: ContextItem; wraithLabel: string }) {
+  if (item.kind === "message") {
+    const label = item.role === "user" ? "You" : item.role === "assistant" ? wraithLabel : "Context";
+    return <article className={clsx("conversation-message", item.role)}>
+      <div className="message-label"><b>{label}</b><small>#{item.archiveLastSequence}</small></div>
+      <p>{item.text}</p>
+    </article>;
+  }
+
+  if (item.kind === "compaction") {
+    return <article className="context-marker"><b>Earlier context, carried forward</b><p>{item.text}</p></article>;
+  }
+
+  return <details className="tool-context">
+    <summary><StatusPill value={item.status ?? item.kind} /><span>{item.tool ?? (item.kind === "toolElision" ? "Older tool activity elided" : "Tool activity")}</span></summary>
+    {item.input != null && <div><b>Input</b><pre>{JSON.stringify(item.input, null, 2)}</pre></div>}
+    {item.output != null && <div><b>Result</b><pre>{JSON.stringify(item.output, null, 2)}</pre></div>}
+  </details>;
+}
+
+function isTerminalRun(run: RunDocument) {
+  return ["completed", "cancelled", "failed"].includes(run.status);
+}
+
+function conversationMessage(message: string, attachments: ConversationAttachment[]) {
+  if (attachments.length === 0) return message;
+  const references = attachments.map((attachment) =>
+    `- ${attachment.fileName} (${attachment.mediaType ?? "application/octet-stream"}, ${attachment.length} bytes): ${attachment.hash}`).join("\n");
+  return `${message}${message ? "\n\n" : ""}Relevant files attached as durable artifacts:\n${references}\n\nUse Get-DwArtifact with the hash to read an attachment; add -AsText for text files.`;
+}
+
 function RunsPanel({ runs, providers, wraith, haunt, busy, mutate }: {
   runs: RunDocument[];
   providers: string[];
@@ -529,8 +709,7 @@ function RunsPanel({ runs, providers, wraith, haunt, busy, mutate }: {
   const [objective, setObjective] = useState("");
   const [provider, setProvider] = useState("openai-codex-subscription");
   const [model, setModel] = useState("gpt-5.6-sol");
-  const [message, setMessage] = useState("");
-  const active = [...runs].reverse().find((run) => !["completed", "cancelled", "failed"].includes(run.status));
+  const active = [...runs].reverse().find((run) => !isTerminalRun(run));
   return (
     <div className="content-grid runs-grid">
       <section className="panel">
@@ -546,14 +725,6 @@ function RunsPanel({ runs, providers, wraith, haunt, busy, mutate }: {
         })}>Start run</button>
         {active && <p className="hint">Complete or cancel the active run before starting another.</p>}
       </section>
-      <section className="panel">
-        <PanelHeading eyebrow="Continue" title={active ? active.objective : "No active run"} />
-        <textarea value={message} disabled={!active} onChange={(event) => setMessage(event.target.value)} placeholder="Give the next input…" />
-        <button className="primary" disabled={busy || !active || !message} onClick={() => void mutate(async () => {
-          await command("run.turn", { wraith, runId: active!.runId, message });
-          setMessage("");
-        })}>Send turn</button>
-      </section>
       <section className="panel wide">
         <PanelHeading eyebrow="Durable history" title="Runs & shell epochs" />
         <div className="run-list">
@@ -562,7 +733,7 @@ function RunsPanel({ runs, providers, wraith, haunt, busy, mutate }: {
             return <article className="run-card" key={run.runId}>
               <div><StatusPill value={run.status} /><h3>{run.objective}</h3><p>{shell.provider} / {shell.model}</p></div>
               <div className="mono faint">{shortId(run.runId)} · {run.shells.length} shell{run.shells.length === 1 ? "" : "s"}</div>
-              {!["completed", "cancelled", "failed"].includes(run.status) && <div className="button-cluster">
+              {!isTerminalRun(run) && <div className="button-cluster">
                 <button disabled={busy} onClick={() => void mutate(async () => { await command("run.complete", { wraith, runId: run.runId, reason: "completed in desktop" }); })}>Complete</button>
                 <button className="danger" disabled={busy} onClick={() => void mutate(async () => { await command("run.cancel", { wraith, runId: run.runId, reason: "cancelled in desktop" }); })}>Cancel</button>
               </div>}
@@ -907,8 +1078,15 @@ function ThemeDialog({ theme, tokens, busy, onSave }: {
     setLocalError("");
   }, [open, theme, tokens]);
 
+  useEffect(() => {
+    if (open) applyTheme(draftTheme, draftTokens);
+  }, [open, draftTheme, draftTokens]);
+
   const palette = DEFAULT_THEME_TOKENS[draftTheme === "light" ? "light" : "dark"];
-  return <Dialog.Root open={open} onOpenChange={setOpen}>
+  return <Dialog.Root open={open} onOpenChange={(nextOpen) => {
+    if (!nextOpen) applyTheme(theme, tokens);
+    setOpen(nextOpen);
+  }}>
     <Dialog.Trigger asChild>
       <button className="quiet theme-settings-button">
         <span>Appearance</span><small>{draftTheme[0].toUpperCase() + draftTheme.slice(1)}</small>
@@ -1152,6 +1330,11 @@ function providerStateLabel(value: string) {
 }
 function shortId(value: string) { return value.slice(0, 10); }
 function formatDate(value: string) { return new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(new Date(value)); }
+function formatBytes(value: number) {
+  if (value < 1024) return `${value} B`;
+  if (value < 1024 * 1024) return `${(value / 1024).toFixed(value < 10 * 1024 ? 1 : 0)} KB`;
+  return `${(value / (1024 * 1024)).toFixed(1)} MB`;
+}
 function messageOf(value: unknown) { return value instanceof Error ? value.message : String(value); }
 
 function applyTheme(theme: ThemePreference["theme"], tokens: Record<string, string>) {

@@ -60,6 +60,12 @@ public sealed record CheckpointSummary(
     DateTimeOffset Timestamp,
     string Subject);
 
+public sealed record ConversationAttachment(
+    string FileName,
+    string Hash,
+    long Length,
+    string? MediaType);
+
 public sealed class DeckwraithHost : IDisposable
 {
     public static readonly IReadOnlyList<string> Commands =
@@ -299,6 +305,60 @@ public sealed class DeckwraithHost : IDisposable
         string providerId,
         CancellationToken cancellationToken = default) =>
         GetApiKeyProvider(providerId).DeleteStoredApiKeyAsync(cancellationToken);
+
+    public async Task<ConversationAttachment> StoreConversationAttachmentAsync(
+        string wraith,
+        string haunt,
+        string path,
+        string? mediaType = null,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(wraith);
+        ArgumentException.ThrowIfNullOrWhiteSpace(haunt);
+        ArgumentException.ThrowIfNullOrWhiteSpace(path);
+        const long maximumLength = 32L * 1024 * 1024;
+        FileInfo file;
+        try
+        {
+            file = new FileInfo(Path.GetFullPath(path));
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            throw new HostProtocolException(
+                "attachment-invalid", "The selected attachment path is invalid.");
+        }
+
+        if (!file.Exists)
+        {
+            throw new HostProtocolException(
+                "attachment-missing", "The selected attachment no longer exists.");
+        }
+
+        if (file.Length > maximumLength)
+        {
+            throw new HostProtocolException(
+                "attachment-too-large", "Conversation attachments may not exceed 32 MB each.");
+        }
+
+        await using var content = new FileStream(
+            file.FullName,
+            FileMode.Open,
+            FileAccess.Read,
+            FileShare.Read,
+            64 * 1024,
+            FileOptions.Asynchronous | FileOptions.SequentialScan);
+        var stored = await _state.StoreArtifactAsync(
+            wraith,
+            haunt,
+            content,
+            mediaType,
+            cancellationToken).ConfigureAwait(false);
+        return new ConversationAttachment(
+            file.Name,
+            stored.Value.Hash,
+            stored.Value.Length,
+            stored.Value.MediaType);
+    }
 
     public Task<HostResponse> ExecuteAsync(
         HostRequest request,

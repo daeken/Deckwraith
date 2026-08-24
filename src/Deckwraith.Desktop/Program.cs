@@ -7,6 +7,7 @@ using Deckwraith.Hosting;
 using Deckwraith.Providers.OpenAI;
 using ElectronNET.API;
 using ElectronNET.API.Entities;
+using Microsoft.AspNetCore.StaticFiles;
 using Microsoft.Extensions.FileProviders;
 
 var deckPath = DesktopDeckPreferences.ResolveDeckPath(args);
@@ -14,6 +15,7 @@ var builder = WebApplication.CreateBuilder(args);
 builder.WebHost.UseElectron(args);
 builder.WebHost.ConfigureKestrel(options => options.Limits.MaxRequestBodySize = 4 * 1024 * 1024);
 var rendererRoot = ResolveRendererRoot(builder.Environment.ContentRootPath);
+var contentTypes = new FileExtensionContentTypeProvider();
 builder.Services.ConfigureHttpJsonOptions(options =>
 {
     options.SerializerOptions.Converters.Add(
@@ -227,6 +229,69 @@ app.MapPost("/api/v1/project/pick", async (DeckPickerRequest request) =>
     return Results.Json(new { path = selected.FirstOrDefault() }, ProtocolJson.Options);
 });
 
+app.MapPost("/api/v1/conversation/attachments/pick", async (
+    ConversationAttachmentPickerRequest request,
+    CancellationToken cancellationToken) =>
+{
+    if (!HybridSupport.IsElectronActive || mainWindow is null)
+    {
+        return Results.Json(
+            new
+            {
+                code = "native-dialog-unavailable",
+                message = "File attachment picking is available in the Deckwraith desktop app.",
+            },
+            ProtocolJson.Options,
+            statusCode: StatusCodes.Status501NotImplemented);
+    }
+
+    if (string.IsNullOrWhiteSpace(request.Wraith) || string.IsNullOrWhiteSpace(request.Haunt))
+    {
+        return Results.Json(
+            new { code = "attachment-context-missing", message = "Choose a haunt before attaching files." },
+            ProtocolJson.Options,
+            statusCode: StatusCodes.Status400BadRequest);
+    }
+
+    var selected = await Electron.Dialog.ShowOpenDialogAsync(
+        mainWindow,
+        new OpenDialogOptions
+        {
+            Title = "Give relevant files to this conversation",
+            ButtonLabel = "Attach files",
+            DefaultPath = FindExistingDirectory(request.DefaultPath ?? session.DeckPath),
+            Properties =
+            [
+                OpenDialogProperty.openFile,
+                OpenDialogProperty.multiSelections,
+                OpenDialogProperty.showHiddenFiles,
+            ],
+        });
+    var attachments = new List<ConversationAttachment>();
+    try
+    {
+        foreach (var path in selected)
+        {
+            _ = contentTypes.TryGetContentType(path, out var mediaType);
+            attachments.Add(await session.StoreConversationAttachmentAsync(
+                request.Wraith,
+                request.Haunt,
+                path,
+                mediaType,
+                cancellationToken).ConfigureAwait(false));
+        }
+    }
+    catch (HostProtocolException exception)
+    {
+        return Results.Json(
+            new { code = exception.Code, exception.Message },
+            ProtocolJson.Options,
+            statusCode: StatusCodes.Status400BadRequest);
+    }
+
+    return Results.Json(attachments, ProtocolJson.Options);
+});
+
 app.MapPost("/api/v1/deck/select", async (
     DeckSelectionRequest request,
     CancellationToken cancellationToken) =>
@@ -432,6 +497,11 @@ internal sealed record ProviderImportRequest(string? Path);
 
 internal sealed record ProviderApiKeyRequest(string? ApiKey);
 
+internal sealed record ConversationAttachmentPickerRequest(
+    string Wraith,
+    string Haunt,
+    string? DefaultPath);
+
 internal sealed record DeckSelectionResult(string DeckPath, bool Initialized);
 
 internal sealed class DesktopDeckException(string code, string message) : Exception(message)
@@ -558,6 +628,30 @@ internal sealed class DesktopDeckSession : IDisposable
             ObjectDisposedException.ThrowIf(_disposed, this);
             return await _runtime.ImportOpenAiSubscriptionAsync(path, cancellationToken)
                 .ConfigureAwait(false);
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    public async Task<ConversationAttachment> StoreConversationAttachmentAsync(
+        string wraith,
+        string haunt,
+        string path,
+        string? mediaType,
+        CancellationToken cancellationToken = default)
+    {
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            return await _runtime.StoreConversationAttachmentAsync(
+                wraith,
+                haunt,
+                path,
+                mediaType,
+                cancellationToken).ConfigureAwait(false);
         }
         finally
         {

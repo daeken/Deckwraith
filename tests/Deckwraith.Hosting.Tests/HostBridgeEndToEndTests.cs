@@ -76,6 +76,67 @@ public sealed class HostBridgeEndToEndTests
     }
 
     [Fact]
+    public async Task ConversationAttachmentsBecomeOpaqueDurableArtifacts()
+    {
+        var temporaryRoot = Path.Combine(
+            Path.GetTempPath(), $"deckwraith-host-attachment-{Guid.NewGuid():N}");
+        var rootPath = Path.Combine(temporaryRoot, "deck");
+        var sourcePath = Path.Combine(temporaryRoot, "notes for steward.txt");
+        Directory.CreateDirectory(rootPath);
+        await File.WriteAllTextAsync(sourcePath, "This belongs in durable conversation context.");
+        try
+        {
+            var options = DeckwraithHostOptions.CreateDefault() with
+            {
+                CredentialStore = new EmptyCredentialStore(),
+            };
+            using var host = await DeckwraithHost.OpenAsync(rootPath, options);
+            AssertSuccess(await host.ExecuteAsync(Command(
+                "deck.initialize", new { }, "initialize-for-attachment")));
+
+            var attachment = await host.StoreConversationAttachmentAsync(
+                "steward",
+                "setup",
+                sourcePath,
+                "text/plain");
+
+            Assert.Equal("notes for steward.txt", attachment.FileName);
+            Assert.StartsWith("sha256:", attachment.Hash, StringComparison.Ordinal);
+            Assert.Equal("text/plain", attachment.MediaType);
+            Assert.Equal(new FileInfo(sourcePath).Length, attachment.Length);
+            Assert.DoesNotContain(
+                temporaryRoot,
+                JsonSerializer.Serialize(attachment),
+                StringComparison.Ordinal);
+            var digest = attachment.Hash["sha256:".Length..];
+            var storedPath = Path.Combine(
+                rootPath,
+                "haunts",
+                "setup",
+                "artifacts",
+                "sha256",
+                digest[..2],
+                digest[2..]);
+            Assert.Equal(
+                "This belongs in durable conversation context.",
+                await File.ReadAllTextAsync(storedPath));
+
+            var archive = await host.ExecuteAsync(Query(
+                "archive.snapshot",
+                new { wraith = "steward", afterSequence = 0, limit = 100 },
+                "attachment-archive"));
+            AssertSuccess(archive);
+            Assert.Contains(
+                archive.Result!.Value.GetProperty("records").EnumerateArray(),
+                record => record.GetProperty("kind").GetString() == "artifact.stored");
+        }
+        finally
+        {
+            Directory.Delete(temporaryRoot, recursive: true);
+        }
+    }
+
+    [Fact]
     public async Task TypedBridgeOwnsLifecycleEventsReconnectAndIdentity()
     {
         var rootPath = Path.Combine(

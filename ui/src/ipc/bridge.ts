@@ -21,6 +21,13 @@ export type DeckSelection = {
   initialized: boolean;
 };
 
+export type ConversationAttachment = {
+  fileName: string;
+  hash: string;
+  length: number;
+  mediaType: string | null;
+};
+
 type HostResponse<T> = {
   protocolVersion: number;
   requestId: string;
@@ -80,6 +87,26 @@ export async function pickProjectFolder(defaultPath: string): Promise<string | n
     throw new BridgeError(result.code ?? "transport", result.message ?? response.statusText);
   }
   return result.path ?? null;
+}
+
+export async function pickConversationAttachments(
+  wraith: string,
+  haunt: string,
+  defaultPath: string,
+): Promise<ConversationAttachment[]> {
+  const response = await fetch("/api/v1/conversation/attachments/pick", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ wraith, haunt, defaultPath }),
+  });
+  const result = (await response.json()) as ConversationAttachment[] & {
+    code?: string;
+    message?: string;
+  };
+  if (!response.ok) {
+    throw new BridgeError(result.code ?? "transport", result.message ?? response.statusText);
+  }
+  return result;
 }
 
 export async function selectDeckPath(path: string): Promise<DeckSelection> {
