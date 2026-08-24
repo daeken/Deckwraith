@@ -67,7 +67,61 @@ streaming values/errors/interruption; the PowerShell adapter executes against th
 runspace and records version and epoch provenance. Context compilation deterministically includes
 pins and a bounded active-cell window while retaining a compact index of excluded cells.
 
-Milestones 5–8 then add the C# kernel, MCP discovery, compaction/recovery hardening, and the Electron/React product shell plus the remaining providers.
+## 5. C# kernel — implemented
+
+Add a second persistent but disposable execution language without weakening the kernel boundary.
+
+- Execute C# script cells through Roslyn with ambient per-wraith submission state.
+- Record runtime version and monotonically increasing cold-replacement epochs.
+- Expose canonical durable values and content-addressed artifacts through the same host authority as PowerShell.
+- Support cooperative interruption and cancellation-terminal execution records.
+- Replace a lost C# kernel cold without replay while retaining prior cell outputs.
+
+Acceptance: a mixed PowerShell/C# deckbook exchanges a canonical value and artifact, a C# cell
+is interrupted, and cold replacement loses an ordinary C# variable without replaying its producer
+or erasing the previous output.
+
+## 6. MCP and model-visible tools — next
+
+Turn the existing execution surfaces into a discoverable inside-facing tool universe.
+
+- Persist global and per-wraith MCP/tool assignments with deterministic precedence.
+- Discover MCP capabilities and generate structured PowerShell proxy commands plus help.
+- Refresh assigned commands only between invocations through controlled runspace replacement.
+- Keep the initial model-visible schema to a tiny provider-neutral execution surface.
+- Close the inference/tool loop so a wraith can invoke PowerShell and deckbook mutations itself.
+
+Acceptance: a fake MCP server contributes a side-effecting structured command that is absent from
+the initial prompt, discoverable through `Get-Command` and `Get-Help`, usable in an object pipeline,
+and invoked by an explicit model tool call with complete durable lifecycle records.
+
+## 7. Continuity and recovery
+
+Make crashes, compaction, and reversal ordinary inspectable state transitions.
+
+- Compact only the oldest contiguous eligible archive prefix with a separately selected model.
+- Reconcile `context.json`, runs, shells, tool calls, and cell executions from archives at startup.
+- Mark abandoned side effects `outcome-unknown` without blind replay.
+- Add crash injection around durable writes and checkpoint boundaries.
+- Expose non-destructive Git-backed reversal that preserves the history being reversed.
+
+Acceptance: a crash after a side-effecting start record is recovered as outcome-unknown, exact
+current context is rebuilt, an oldest-prefix summary covers no gaps or overlaps, the deckbook is
+unchanged, and a bad mutable-state checkpoint is reversed by a new commit.
+
+## 8. Product shell and release
+
+Ship the inspectable desktop product without making the renderer an authority boundary.
+
+- Host the application runtime behind a versioned command/query/event bridge.
+- Add the Electron/React identity, run, deckbook, archive, and checkpoint inspector/editor.
+- Add Anthropic, Google, and OpenAI-compatible adapters behind shared provider contracts.
+- Prove renderer reconnect/schema compatibility, cross-platform packaging, and headless parity.
+- Exercise the complete architecture acceptance scenario and inside-out bootstrap flow.
+
+Acceptance: the packaged shell creates and resumes a wraith, observes live model and cell events,
+edits a deckbook through host commands, survives renderer reconnect, changes provider without
+changing identity, and the same lifecycle remains green through the headless host on Linux.
 
 ## Package boundaries
 
