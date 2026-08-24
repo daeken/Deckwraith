@@ -7,18 +7,27 @@ using Deckwraith.Application.State;
 using Deckwraith.Core.Archives;
 using Deckwraith.Core.Naming;
 using Deckwraith.Core.Serialization;
+using Deckwraith.Mcp;
 using Deckwraith.PowerShell.Cmdlets;
 
 namespace Deckwraith.PowerShell.Hosting;
 
 public sealed class PowerShellRuntimeManager : IDisposable
 {
+    private static readonly string[] DefaultModules =
+    [
+        "Microsoft.PowerShell.Management",
+        "Microsoft.PowerShell.Utility",
+    ];
+
     private readonly string _rootPath;
     private readonly DurableStateRuntime _durableState;
     private readonly ArtifactRuntime _artifacts;
     private readonly IAgentArchive _archive;
     private readonly ICheckpointStore _checkpoints;
     private readonly IDeckClock _clock;
+    private readonly McpCatalogRuntime? _mcp;
+    private readonly bool _ownsMcp;
     private readonly ConcurrentDictionary<string, WraithPowerShellSession> _sessions =
         new(StringComparer.Ordinal);
 
@@ -28,7 +37,9 @@ public sealed class PowerShellRuntimeManager : IDisposable
         ArtifactRuntime artifacts,
         IAgentArchive archive,
         ICheckpointStore checkpoints,
-        IDeckClock? clock = null)
+        IDeckClock? clock = null,
+        McpCatalogRuntime? mcp = null,
+        bool ownsMcp = false)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(rootPath);
         _rootPath = Path.GetFullPath(rootPath);
@@ -37,9 +48,11 @@ public sealed class PowerShellRuntimeManager : IDisposable
         _archive = archive;
         _checkpoints = checkpoints;
         _clock = clock ?? SystemDeckClock.Instance;
+        _mcp = mcp;
+        _ownsMcp = ownsMcp;
     }
 
-    public Task<PowerShellExecutionResult> ExecuteAsync(
+    public async Task<PowerShellExecutionResult> ExecuteAsync(
         PowerShellInvocationContext invocation,
         string script,
         CancellationToken cancellationToken = default)
@@ -48,12 +61,17 @@ public sealed class PowerShellRuntimeManager : IDisposable
         ArgumentNullException.ThrowIfNull(script);
         var wraith = CanonicalName.Parse(invocation.Wraith);
         var normalized = invocation with { Wraith = wraith.Value };
-        var session = GetOrCreateSession(wraith);
-        return session.ExecuteAsync(normalized, script, cancellationToken);
+        var catalog = _mcp is null
+            ? null
+            : await _mcp.GetEffectiveCatalogAsync(
+                wraith.Value, cancellationToken: cancellationToken).ConfigureAwait(false);
+        var session = GetOrCreateSession(wraith, catalog);
+        return await session.ExecuteAsync(normalized, script, catalog, cancellationToken)
+            .ConfigureAwait(false);
     }
 
     public PowerShellRuntimeInfo EnsureRuntime(string wraith) =>
-        GetOrCreateSession(CanonicalName.Parse(wraith)).Info;
+        GetOrCreateSession(CanonicalName.Parse(wraith), null).Info;
 
     public async Task<PowerShellRuntimeInfo> ReplaceAsync(
         PowerShellInvocationContext invocation,
@@ -63,8 +81,13 @@ public sealed class PowerShellRuntimeManager : IDisposable
         ArgumentException.ThrowIfNullOrWhiteSpace(reason);
         var wraith = CanonicalName.Parse(invocation.Wraith);
         var normalized = invocation with { Wraith = wraith.Value };
-        var session = GetOrCreateSession(wraith);
-        return await session.ReplaceAsync(normalized, reason, cancellationToken).ConfigureAwait(false);
+        var catalog = _mcp is null
+            ? null
+            : await _mcp.GetEffectiveCatalogAsync(
+                wraith.Value, cancellationToken: cancellationToken).ConfigureAwait(false);
+        var session = GetOrCreateSession(wraith, catalog);
+        return await session.ReplaceAsync(normalized, reason, catalog, cancellationToken)
+            .ConfigureAwait(false);
     }
 
     public PowerShellRuntimeInfo? TryGetInfo(string wraith) =>
@@ -72,17 +95,33 @@ public sealed class PowerShellRuntimeManager : IDisposable
             ? session.Info
             : null;
 
-    private WraithPowerShellSession GetOrCreateSession(CanonicalName wraith) =>
-        _sessions.GetOrAdd(
-            wraith.Value,
-            _ => new WraithPowerShellSession(
-                _rootPath,
-                wraith,
-                _durableState,
-                _artifacts,
-                _archive,
-                _checkpoints,
-                _clock));
+    private WraithPowerShellSession GetOrCreateSession(
+        CanonicalName wraith,
+        McpEffectiveCatalog? catalog)
+    {
+        if (_sessions.TryGetValue(wraith.Value, out var existing))
+        {
+            return existing;
+        }
+
+        var created = new WraithPowerShellSession(
+            _rootPath,
+            wraith,
+            _durableState,
+            _artifacts,
+            _archive,
+            _checkpoints,
+            _clock,
+            _mcp,
+            catalog);
+        var selected = _sessions.GetOrAdd(wraith.Value, created);
+        if (!ReferenceEquals(selected, created))
+        {
+            created.Dispose();
+        }
+
+        return selected;
+    }
 
     public void Dispose()
     {
@@ -92,6 +131,10 @@ public sealed class PowerShellRuntimeManager : IDisposable
         }
 
         _sessions.Clear();
+        if (_ownsMcp)
+        {
+            _mcp?.Dispose();
+        }
     }
 
     private sealed class WraithPowerShellSession : IDisposable
@@ -101,10 +144,12 @@ public sealed class PowerShellRuntimeManager : IDisposable
         private readonly IAgentArchive _archive;
         private readonly ICheckpointStore _checkpoints;
         private readonly IDeckClock _clock;
+        private readonly McpCatalogRuntime? _mcp;
         private readonly SemaphoreSlim _gate = new(1, 1);
         private readonly PowerShellSessionContext _sessionContext;
         private Runspace _runspace;
         private PowerShellRuntimeInfo _info;
+        private McpEffectiveCatalog? _catalog;
         private bool _disposed;
 
         public WraithPowerShellSession(
@@ -114,17 +159,28 @@ public sealed class PowerShellRuntimeManager : IDisposable
             ArtifactRuntime artifacts,
             IAgentArchive archive,
             ICheckpointStore checkpoints,
-            IDeckClock clock)
+            IDeckClock clock,
+            McpCatalogRuntime? mcp,
+            McpEffectiveCatalog? catalog)
         {
             _rootPath = rootPath;
             _wraith = wraith;
             _archive = archive;
             _checkpoints = checkpoints;
             _clock = clock;
-            _info = new PowerShellRuntimeInfo(wraith.Value, 1, clock.UtcNow, false, []);
+            _mcp = mcp;
+            _catalog = catalog;
+            _info = new PowerShellRuntimeInfo(
+                wraith.Value,
+                1,
+                clock.UtcNow,
+                false,
+                [],
+                catalog?.ContentHash,
+                DescribeMcpTools(catalog));
             _sessionContext = new PowerShellSessionContext(
-                durableState, artifacts, () => _info);
-            var candidate = BuildCandidate();
+                durableState, artifacts, mcp, catalog, () => _info);
+            var candidate = BuildCandidate(catalog);
             _runspace = candidate.Runspace;
             _info = _info with { Tools = candidate.Tools };
         }
@@ -134,6 +190,7 @@ public sealed class PowerShellRuntimeManager : IDisposable
         public async Task<PowerShellExecutionResult> ExecuteAsync(
             PowerShellInvocationContext invocation,
             string script,
+            McpEffectiveCatalog? catalog,
             CancellationToken cancellationToken)
         {
             await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -141,6 +198,18 @@ public sealed class PowerShellRuntimeManager : IDisposable
             {
                 ObjectDisposedException.ThrowIf(_disposed, this);
                 _sessionContext.SetInvocation(invocation);
+                var toolsReloaded = false;
+                if (!StringComparer.Ordinal.Equals(
+                    _catalog?.ContentHash, catalog?.ContentHash))
+                {
+                    await ReplaceUnderLockAsync(
+                        invocation,
+                        "mcp-catalog-changed",
+                        catalog,
+                        cancellationToken).ConfigureAwait(false);
+                    toolsReloaded = true;
+                }
+
                 var executionEpoch = _info.Epoch;
                 IReadOnlyList<PSObject> output;
                 IReadOnlyList<ErrorRecord> errors;
@@ -155,12 +224,18 @@ public sealed class PowerShellRuntimeManager : IDisposable
                     errors = powershell.Streams.Error.ToArray();
                 }
 
-                var toolsReloaded = false;
                 if (_sessionContext.ConsumeToolReloadRequest())
                 {
+                    var refreshedCatalog = _mcp is null
+                        ? catalog
+                        : await _mcp.GetEffectiveCatalogAsync(
+                            _wraith.Value,
+                            forceRefresh: true,
+                            cancellationToken).ConfigureAwait(false);
                     await ReplaceUnderLockAsync(
                         invocation,
                         "tool-catalog-reloaded",
+                        refreshedCatalog,
                         cancellationToken).ConfigureAwait(false);
                     toolsReloaded = true;
                 }
@@ -177,6 +252,7 @@ public sealed class PowerShellRuntimeManager : IDisposable
         public async Task<PowerShellRuntimeInfo> ReplaceAsync(
             PowerShellInvocationContext invocation,
             string reason,
+            McpEffectiveCatalog? catalog,
             CancellationToken cancellationToken)
         {
             await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -184,7 +260,8 @@ public sealed class PowerShellRuntimeManager : IDisposable
             {
                 ObjectDisposedException.ThrowIf(_disposed, this);
                 _sessionContext.SetInvocation(invocation);
-                await ReplaceUnderLockAsync(invocation, reason, cancellationToken).ConfigureAwait(false);
+                await ReplaceUnderLockAsync(invocation, reason, catalog, cancellationToken)
+                    .ConfigureAwait(false);
                 return _info;
             }
             finally
@@ -208,12 +285,13 @@ public sealed class PowerShellRuntimeManager : IDisposable
         private async Task ReplaceUnderLockAsync(
             PowerShellInvocationContext invocation,
             string reason,
+            McpEffectiveCatalog? catalog,
             CancellationToken cancellationToken)
         {
             CandidateRunspace candidate;
             try
             {
-                candidate = BuildCandidate();
+                candidate = BuildCandidate(catalog);
             }
             catch (PowerShellToolLoadException exception)
             {
@@ -229,12 +307,16 @@ public sealed class PowerShellRuntimeManager : IDisposable
             var previous = _runspace;
             var previousEpoch = _info.Epoch;
             _runspace = candidate.Runspace;
+            _catalog = catalog;
+            _sessionContext.SetMcpCatalog(catalog);
             _info = new PowerShellRuntimeInfo(
                 _wraith.Value,
                 checked(previousEpoch + 1),
                 _clock.UtcNow,
                 true,
-                candidate.Tools);
+                candidate.Tools,
+                catalog?.ContentHash,
+                DescribeMcpTools(catalog));
             previous.Dispose();
             await AppendLifecycleEventAsync(
                 invocation,
@@ -250,8 +332,15 @@ public sealed class PowerShellRuntimeManager : IDisposable
                         source = Path.GetFileName(tool.SourcePath),
                         tool.ContentHash,
                     }).ToArray(),
+                    mcpCatalogHash = catalog?.ContentHash,
+                    mcpTools = catalog?.Tools.Select(tool => new
+                    {
+                        tool.QualifiedName,
+                        tool.PowerShellModule,
+                        tool.PowerShellCommand,
+                    }).ToArray(),
                 },
-                reason == "tool-catalog-reloaded"
+                reason is "tool-catalog-reloaded" or "mcp-catalog-changed"
                     ? "powershell-tools-reloaded"
                     : "powershell-runspace-replaced",
                 cancellationToken).ConfigureAwait(false);
@@ -280,10 +369,11 @@ public sealed class PowerShellRuntimeManager : IDisposable
                 cancellationToken).ConfigureAwait(false);
         }
 
-        private CandidateRunspace BuildCandidate()
+        private CandidateRunspace BuildCandidate(McpEffectiveCatalog? catalog)
         {
             var initialState = InitialSessionState.CreateDefault2();
             initialState.LanguageMode = PSLanguageMode.FullLanguage;
+            initialState.ImportPSModule(DefaultModules);
             AddCmdlet<GetDwStateCommand>(initialState, "Get-DwState");
             AddCmdlet<SetDwStateCommand>(initialState, "Set-DwState");
             AddCmdlet<RemoveDwStateCommand>(initialState, "Remove-DwState");
@@ -291,6 +381,9 @@ public sealed class PowerShellRuntimeManager : IDisposable
             AddCmdlet<SetDwArtifactCommand>(initialState, "Set-DwArtifact");
             AddCmdlet<GetDwRuntimeCommand>(initialState, "Get-DwRuntime");
             AddCmdlet<GetDwToolCommand>(initialState, "Get-DwTool");
+            AddCmdlet<GetDwToolSchemaCommand>(initialState, "Get-DwToolSchema");
+            AddCmdlet<FindDwCommandCommand>(initialState, "Find-DwCommand");
+            AddCmdlet<InvokeDwMcpToolCommand>(initialState, "Invoke-DwMcpTool");
             AddCmdlet<ReloadDwToolsCommand>(initialState, "Update-DwTools");
             initialState.Commands.Add(new SessionStateAliasEntry(
                 "Reload-DwTools", "Update-DwTools"));
@@ -300,6 +393,7 @@ public sealed class PowerShellRuntimeManager : IDisposable
                 runspace.Open();
                 runspace.SessionStateProxy.SetVariable(
                     DwCmdlet.SessionVariableName, _sessionContext);
+                LoadMcpTools(runspace, catalog);
                 var tools = LoadTools(runspace);
                 return new CandidateRunspace(runspace, tools);
             }
@@ -307,6 +401,32 @@ public sealed class PowerShellRuntimeManager : IDisposable
             {
                 runspace.Dispose();
                 throw;
+            }
+        }
+
+        private static void LoadMcpTools(Runspace runspace, McpEffectiveCatalog? catalog)
+        {
+            if (catalog is null || catalog.Tools.Count == 0)
+            {
+                return;
+            }
+
+            foreach (var module in catalog.Tools.GroupBy(
+                tool => tool.PowerShellModule, StringComparer.Ordinal))
+            {
+                using var powershell = System.Management.Automation.PowerShell.Create();
+                powershell.Runspace = runspace;
+                powershell.AddScript(McpPowerShellProxyBuilder.BuildModuleImport(
+                    module.Key, module.ToArray()));
+                _ = powershell.Invoke();
+                if (powershell.HadErrors)
+                {
+                    var diagnostic = string.Join(
+                        Environment.NewLine,
+                        powershell.Streams.Error.Select(error => error.ToString()));
+                    throw new PowerShellToolLoadException(
+                        $"Could not generate MCP module '{module.Key}': {diagnostic}");
+                }
             }
         }
 
@@ -347,6 +467,14 @@ public sealed class PowerShellRuntimeManager : IDisposable
 
         private static string QuotePowerShell(string value) =>
             "'" + value.Replace("'", "''", StringComparison.Ordinal) + "'";
+
+        private static PowerShellMcpToolAssignment[] DescribeMcpTools(
+            McpEffectiveCatalog? catalog) =>
+            catalog?.Tools.Select(tool => new PowerShellMcpToolAssignment(
+                tool.QualifiedName,
+                tool.PowerShellModule,
+                tool.PowerShellCommand,
+                tool.Description)).ToArray() ?? [];
 
         private sealed record CandidateRunspace(
             Runspace Runspace,

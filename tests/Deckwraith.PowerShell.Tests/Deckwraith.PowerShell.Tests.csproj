@@ -11,6 +11,7 @@
   <ItemGroup>
     <ProjectReference Include="../../src/Deckwraith.Persistence/Deckwraith.Persistence.csproj" />
     <ProjectReference Include="../../src/Deckwraith.PowerShell/Deckwraith.PowerShell.csproj" />
+    <ProjectReference Include="../Deckwraith.Mcp.TestServer/Deckwraith.Mcp.TestServer.csproj" />
   </ItemGroup>
   <ItemGroup>
     <Using Include="Xunit" />

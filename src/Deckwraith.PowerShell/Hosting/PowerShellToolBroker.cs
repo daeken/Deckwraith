@@ -77,7 +77,12 @@ public sealed class PowerShellToolBroker : IToolBroker, IDisposable
         }
 
         var execution = await _runtime.ExecuteAsync(
-            new PowerShellInvocationContext(context.Agent, context.RunId, context.Haunt),
+            new PowerShellInvocationContext(
+                context.Agent,
+                context.RunId,
+                context.Haunt,
+                context.ShellId,
+                context.OperationId),
             scriptElement.GetString()!,
             cancellationToken).ConfigureAwait(false);
         var output = CanonicalJson.ToElement(new

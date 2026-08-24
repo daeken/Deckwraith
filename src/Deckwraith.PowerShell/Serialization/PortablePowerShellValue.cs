@@ -21,10 +21,7 @@ public static class PortablePowerShellValue
         JsonValueKind.Number when value.TryGetDecimal(out var number) => number,
         JsonValueKind.Number => value.GetDouble(),
         JsonValueKind.Array => value.EnumerateArray().Select(FromJsonElement).ToArray(),
-        JsonValueKind.Object => value.EnumerateObject().ToDictionary(
-            property => property.Name,
-            property => FromJsonElement(property.Value),
-            StringComparer.Ordinal),
+        JsonValueKind.Object => ToPowerShellObject(value),
         _ => throw new DeckStateException($"JSON kind '{value.ValueKind}' is not portable."),
     };
 
@@ -106,6 +103,18 @@ public static class PortablePowerShellValue
 
         throw new DeckStateException(
             $"Values of type '{value.GetType().FullName}' are not portable durable values.");
+    }
+
+    private static PSObject ToPowerShellObject(JsonElement value)
+    {
+        var result = new PSObject();
+        foreach (var property in value.EnumerateObject())
+        {
+            result.Properties.Add(new PSNoteProperty(
+                property.Name, FromJsonElement(property.Value)));
+        }
+
+        return result;
     }
 
     private static object? Unwrap(object? value)

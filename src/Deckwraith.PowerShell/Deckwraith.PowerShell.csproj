@@ -5,5 +5,6 @@
   <ItemGroup>
     <ProjectReference Include="../Deckwraith.Application/Deckwraith.Application.csproj" />
     <ProjectReference Include="../Deckwraith.Core/Deckwraith.Core.csproj" />
+    <ProjectReference Include="../Deckwraith.Mcp/Deckwraith.Mcp.csproj" />
   </ItemGroup>
 </Project>

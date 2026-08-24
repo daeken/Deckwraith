@@ -4,6 +4,7 @@ using Deckwraith.Application.State;
 using Deckwraith.Kernels.Abstractions;
 using Deckwraith.Kernels.CSharp;
 using Deckwraith.Kernels.PowerShell;
+using Deckwraith.Mcp;
 using Deckwraith.Notebooks;
 using Deckwraith.Notebooks.Model;
 using Deckwraith.Persistence;
@@ -200,7 +201,14 @@ internal static class DeckwraithCli
             archive,
             checkpoints);
         var tools = new PowerShellToolBroker(new PowerShellRuntimeManager(
-            rootPath, durableState, artifacts, archive, checkpoints));
+            rootPath,
+            durableState,
+            artifacts,
+            archive,
+            checkpoints,
+            mcp: new McpCatalogRuntime(
+                rootPath, deckState, archive, checkpoints),
+            ownsMcp: true));
         return new InferenceRuntime(
             deckState,
             new JsonInferenceStateStore(rootPath),
@@ -258,7 +266,14 @@ internal static class DeckwraithCli
             archive,
             checkpoints);
         using var manager = new PowerShellRuntimeManager(
-            rootPath, durableState, artifactRuntime, archive, checkpoints);
+            rootPath,
+            durableState,
+            artifactRuntime,
+            archive,
+            checkpoints,
+            mcp: new McpCatalogRuntime(
+                rootPath, deckState, archive, checkpoints),
+            ownsMcp: true);
         var result = await manager.ExecuteAsync(
             new PowerShellInvocationContext(
                 arguments[2],
@@ -407,7 +422,14 @@ internal static class DeckwraithCli
                 archive,
                 checkpoints);
             _runspaces = new PowerShellRuntimeManager(
-                rootPath, durableState, artifactRuntime, archive, checkpoints);
+                rootPath,
+                durableState,
+                artifactRuntime,
+                archive,
+                checkpoints,
+                mcp: new McpCatalogRuntime(
+                    rootPath, deckState, archive, checkpoints),
+                ownsMcp: true);
             _powerShellKernel = new PowerShellCellKernel(_runspaces);
             _csharpKernel = new CSharpCellKernel(
                 durableState, artifactRuntime, archive, checkpoints);
