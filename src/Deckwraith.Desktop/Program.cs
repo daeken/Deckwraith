@@ -3,6 +3,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using Deckwraith.Application.Hosting;
 using Deckwraith.Hosting;
+using Deckwraith.Providers.OpenAI;
 using ElectronNET.API;
 using ElectronNET.API.Entities;
 using Microsoft.Extensions.FileProviders;
@@ -49,14 +50,77 @@ else
     app.UseStaticFiles();
 }
 
-app.MapGet("/api/v1/status", () => Results.Json(new
+app.MapGet("/api/v1/status", async (CancellationToken cancellationToken) => Results.Json(new
 {
     protocolVersion = HostProtocol.CurrentVersion,
     eventCursor = session.LatestEventCursor,
     deckPath = session.DeckPath,
     theme = DesktopDeckPreferences.ResolveTheme(),
     themeTokens = DesktopDeckPreferences.ResolveThemeTokens(),
+    providers = await session.ReadProviderSnapshotsAsync(cancellationToken).ConfigureAwait(false),
 }, ProtocolJson.Options));
+
+app.MapGet("/api/v1/providers", async (CancellationToken cancellationToken) =>
+    Results.Json(
+        await session.ReadProviderSnapshotsAsync(cancellationToken).ConfigureAwait(false),
+        ProtocolJson.Options));
+
+app.MapPost("/api/v1/providers/openai-subscription/import-existing", async (
+    ProviderImportRequest request,
+    CancellationToken cancellationToken) =>
+{
+    var path = string.IsNullOrWhiteSpace(request.Path)
+        ? Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+            ".codex",
+            "auth.json")
+        : DesktopDeckPreferences.NormalizePath(request.Path);
+    if (!File.Exists(path))
+    {
+        return Results.Json(
+            new
+            {
+                code = "credential-import-missing",
+                message = "No existing Codex sign-in was found on this Mac.",
+            },
+            ProtocolJson.Options,
+            statusCode: StatusCodes.Status404NotFound);
+    }
+
+    try
+    {
+        return Results.Json(
+            await session.ImportOpenAiSubscriptionAsync(path, cancellationToken)
+                .ConfigureAwait(false),
+            ProtocolJson.Options);
+    }
+    catch (OpenAiAuthenticationException exception)
+    {
+        return Results.Json(
+            new { code = exception.Code, exception.Message },
+            ProtocolJson.Options,
+            statusCode: StatusCodes.Status400BadRequest);
+    }
+});
+
+app.MapPost("/api/v1/providers/openai-subscription/disconnect", async (
+    CancellationToken cancellationToken) =>
+{
+    try
+    {
+        await session.DisconnectOpenAiSubscriptionAsync(cancellationToken).ConfigureAwait(false);
+        return Results.Json(
+            await session.ReadProviderSnapshotsAsync(cancellationToken).ConfigureAwait(false),
+            ProtocolJson.Options);
+    }
+    catch (OpenAiAuthenticationException exception)
+    {
+        return Results.Json(
+            new { code = exception.Code, exception.Message },
+            ProtocolJson.Options,
+            statusCode: StatusCodes.Status400BadRequest);
+    }
+});
 
 app.MapPost("/api/v1/deck/pick", async (DeckPickerRequest request) =>
 {
@@ -288,6 +352,8 @@ internal sealed record ThemePreferenceRequest(
     string Theme,
     IReadOnlyDictionary<string, string>? Tokens);
 
+internal sealed record ProviderImportRequest(string? Path);
+
 internal sealed record DeckSelectionResult(string DeckPath, bool Initialized);
 
 internal sealed class DesktopDeckException(string code, string message) : Exception(message)
@@ -384,6 +450,54 @@ internal sealed class DesktopDeckSession : IDisposable
         long afterCursor,
         CancellationToken cancellationToken = default) =>
         _runtime.ReadEventsAsync(afterCursor, cancellationToken);
+
+    public async ValueTask<IReadOnlyList<ProviderSnapshot>> ReadProviderSnapshotsAsync(
+        CancellationToken cancellationToken = default)
+    {
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            return await _runtime.ReadProviderSnapshotsAsync(cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    public async ValueTask<Deckwraith.Providers.Abstractions.ProviderAuthenticationStatus>
+        ImportOpenAiSubscriptionAsync(
+            string path,
+            CancellationToken cancellationToken = default)
+    {
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            return await _runtime.ImportOpenAiSubscriptionAsync(path, cancellationToken)
+                .ConfigureAwait(false);
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    public async ValueTask DisconnectOpenAiSubscriptionAsync(
+        CancellationToken cancellationToken = default)
+    {
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            await _runtime.DisconnectOpenAiSubscriptionAsync(cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
 
     public void Dispose()
     {

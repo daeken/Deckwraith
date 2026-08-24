@@ -24,10 +24,14 @@ using Deckwraith.Persistence.Git;
 using Deckwraith.Persistence.State;
 using Deckwraith.PowerShell.Hosting;
 using Deckwraith.Providers.Abstractions;
+using Deckwraith.Providers.OpenAI;
 
 namespace Deckwraith.Hosting;
 
-public sealed record ProviderSnapshot(string ProviderId, ProviderCapabilities Capabilities);
+public sealed record ProviderSnapshot(
+    string ProviderId,
+    ProviderCapabilities Capabilities,
+    ProviderAuthenticationStatus? Authentication);
 
 public sealed record DeckSnapshot(
     IReadOnlyList<WraithDocument> Wraiths,
@@ -249,6 +253,34 @@ public sealed class DeckwraithHost : IDisposable
         long afterCursor,
         CancellationToken cancellationToken = default) =>
         _events.ReadAsync(afterCursor, cancellationToken);
+
+    public async ValueTask<IReadOnlyList<ProviderSnapshot>> ReadProviderSnapshotsAsync(
+        CancellationToken cancellationToken = default)
+    {
+        var snapshots = new List<ProviderSnapshot>();
+        foreach (var provider in _providers.Providers)
+        {
+            var authentication = provider is IProviderAuthenticationSource authenticationSource
+                ? await authenticationSource.GetAuthenticationStatusAsync(cancellationToken)
+                    .ConfigureAwait(false)
+                : null;
+            snapshots.Add(new ProviderSnapshot(
+                provider.ProviderId,
+                provider.Capabilities,
+                authentication));
+        }
+
+        return snapshots;
+    }
+
+    public ValueTask<ProviderAuthenticationStatus> ImportOpenAiSubscriptionAsync(
+        string path,
+        CancellationToken cancellationToken = default) =>
+        GetOpenAiSubscriptionProvider().ImportCodexSessionAsync(path, cancellationToken);
+
+    public ValueTask DisconnectOpenAiSubscriptionAsync(
+        CancellationToken cancellationToken = default) =>
+        GetOpenAiSubscriptionProvider().DisconnectAsync(cancellationToken);
 
     public Task<HostResponse> ExecuteAsync(
         HostRequest request,
@@ -594,9 +626,13 @@ public sealed class DeckwraithHost : IDisposable
         new(
             await _state.ListWraithsAsync(cancellationToken).ConfigureAwait(false),
             await _state.ListHauntsAsync(cancellationToken).ConfigureAwait(false),
-            _providers.Providers.Select(provider =>
-                new ProviderSnapshot(provider.ProviderId, provider.Capabilities)).ToArray(),
+            await ReadProviderSnapshotsAsync(cancellationToken).ConfigureAwait(false),
             _events.LatestCursor);
+
+    private OpenAiSubscriptionProvider GetOpenAiSubscriptionProvider() =>
+        _providers.GetProvider(OpenAiSubscriptionProvider.Id) as OpenAiSubscriptionProvider ??
+        throw new HostProtocolException(
+            "provider-unavailable", "OpenAI subscription access is not configured in this host.");
 
     private async Task<WraithSnapshot> ReadWraithSnapshotAsync(
         JsonElement payload,

@@ -39,7 +39,7 @@ the selected provider without Deckwraith aliases.
 
 | Provider ID | Authentication | Base URL override |
 | --- | --- | --- |
-| `openai-codex-subscription` | Existing Codex sign-in with ChatGPT | Not applicable |
+| `openai-codex-subscription` | Deckwraith ChatGPT session in the platform credential store | `DECKWRAITH_OPENAI_SUBSCRIPTION_BASE_URL` |
 | `anthropic` | `ANTHROPIC_API_KEY` | `DECKWRAITH_ANTHROPIC_BASE_URL` |
 | `google-gemini` | `GEMINI_API_KEY` | `DECKWRAITH_GOOGLE_BASE_URL` |
 | `openai-api` | `OPENAI_API_KEY` | `DECKWRAITH_OPENAI_BASE_URL` |
@@ -53,29 +53,28 @@ the provider-specific API path.
 
 ### ChatGPT subscription
 
-The subscription adapter launches `codex app-server` and uses Codex's built-in `openai` provider.
-It does not require `OPENAI_API_KEY`. Sign in with ChatGPT using the
-[official OpenAI authentication flow](https://learn.chatgpt.com/docs/auth), then verify that the
-Codex executable can read the session.
+The subscription adapter talks directly to OpenAI's Codex Responses transport. It does not start
+Codex or a local proxy, and it never falls back to `OPENAI_API_KEY` billing. This follows OpenAI's
+[documented distinction between ChatGPT subscription sign-in and API-key access](https://learn.chatgpt.com/docs/auth).
 
-Deckwraith resolves the executable in this order:
-
-1. `DECKWRAITH_CODEX_PATH`
-2. `/Applications/ChatGPT.app/Contents/Resources/codex` on macOS when present
-3. `codex` from `PATH`
+During the current macOS dogfood phase, **Provider access → Use existing sign-in** imports an
+existing `~/.codex/auth.json` ChatGPT session into Deckwraith's own macOS Keychain item. The import
+is explicit; the source file is never copied into the deck. Deckwraith then refreshes the session
+natively through OpenAI before expiry and retries one rejected request after a forced refresh. A
+Deckwraith-owned browser sign-in remains part of the active pre-1.0 gate, so this import is a rapid
+testing bridge rather than the finished onboarding flow.
 
 Example:
 
 ```text
-DECKWRAITH_CODEX_PATH=/Applications/ChatGPT.app/Contents/Resources/codex \
 dotnet run --project src/Deckwraith.Headless -- run-openai \
   /path/to/deck-state wraith1 deckwraith gpt-5.6-sol \
   "Inspect the project and finish one bounded improvement" "Begin."
 ```
 
-The bridge injects the complete current identity and materialized provider-neutral context on every
-invocation. Deckwraith retains authority over tool execution and accepts only its constrained tool
-envelope from the model; Codex-native commands are disabled at this boundary.
+The adapter injects the complete current identity and materialized provider-neutral context on
+every invocation. Deckwraith retains authority over tool execution; only the tools in its canonical
+request are exposed to the model.
 
 ### API-backed providers
 
@@ -101,9 +100,12 @@ ZAI_API_KEY=... dotnet run --project src/Deckwraith.Headless -- run-provider \
 `openai-compatible` remains registered as a compatibility alias for pre-1.0 decks that already
 reference it. New OpenAI shells should select `openai-api`.
 
-Credentials are read from the host environment at invocation time and are not written into normal
-provider configuration. They can still leak transitively if a tool, model, log, or artifact emits
-them, so this is not a repository-sanitization guarantee.
+API credentials are currently read from the host environment at invocation time. Subscription
+credentials use the macOS Keychain; platforms without an integrated credential store currently use
+an atomic owner-only fallback under the platform application-data directory. Neither source writes
+credentials into ordinary provider configuration or the deck. Credentials can still leak
+transitively if a tool, model, log, or artifact emits them, so this is not a
+repository-sanitization guarantee.
 
 ## Atomic file edits
 

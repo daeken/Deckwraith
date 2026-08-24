@@ -7,6 +7,8 @@ import {
   assertProtocolCompatible,
   BridgeError,
   command,
+  disconnectOpenAiSession,
+  importExistingOpenAiSession,
   pickDeckFolder,
   pickProjectFolder,
   query,
@@ -24,6 +26,7 @@ import type {
   HauntProjectPolicy,
   HostEvent,
   IdentityDocument,
+  ProviderSnapshot,
   RunDocument,
   WraithSnapshot,
 } from "./state/types";
@@ -270,6 +273,36 @@ export function App() {
               const saved = await setThemePreference(nextTheme, nextTokens);
               setTheme(saved.theme);
               setThemeTokens(saved.tokens);
+            } catch (reason) {
+              setError(messageOf(reason));
+              throw reason;
+            } finally {
+              setBusy(false);
+            }
+          }}
+        />
+        <ProviderDialog
+          providers={deck?.providers ?? []}
+          busy={busy}
+          onImport={async () => {
+            setBusy(true);
+            setError("");
+            try {
+              await importExistingOpenAiSession();
+              await refresh();
+            } catch (reason) {
+              setError(messageOf(reason));
+              throw reason;
+            } finally {
+              setBusy(false);
+            }
+          }}
+          onDisconnect={async () => {
+            setBusy(true);
+            setError("");
+            try {
+              await disconnectOpenAiSession();
+              await refresh();
             } catch (reason) {
               setError(messageOf(reason));
               throw reason;
@@ -863,6 +896,60 @@ function ThemeDialog({ theme, tokens, busy, onSave }: {
   </Dialog.Root>;
 }
 
+function ProviderDialog({ providers, busy, onImport, onDisconnect }: {
+  providers: ProviderSnapshot[];
+  busy: boolean;
+  onImport: () => Promise<void>;
+  onDisconnect: () => Promise<void>;
+}) {
+  const [open, setOpen] = useState(false);
+  const [localError, setLocalError] = useState("");
+  const provider = providers.find((item) => item.providerId === "openai-codex-subscription");
+  const authentication = provider?.authentication;
+  const state = authentication?.state ?? "missing";
+  const connected = state !== "missing";
+  useEffect(() => {
+    if (!open) setLocalError("");
+  }, [open]);
+
+  return <Dialog.Root open={open} onOpenChange={setOpen}>
+    <Dialog.Trigger asChild>
+      <button className="quiet provider-settings-button">
+        <span>Provider access</span><small className={clsx("provider-state", state)}>{providerStateLabel(state)}</small>
+      </button>
+    </Dialog.Trigger>
+    <Dialog.Portal>
+      <Dialog.Overlay className="dialog-overlay" />
+      <Dialog.Content className="dialog-content provider-dialog">
+        <Dialog.Title>Provider access</Dialog.Title>
+        <Dialog.Description>Connections belong to this installation, outside the deck and its Git history.</Dialog.Description>
+        <div className="provider-card">
+          <div className="provider-card-heading">
+            <div><b>OpenAI</b><span>ChatGPT subscription</span></div>
+            <StatusPill value={state} />
+          </div>
+          <p>{authentication?.message ?? "Connect a ChatGPT account to use subscription access."}</p>
+          {authentication?.accountLabel && <small>Account: {authentication.accountLabel}</small>}
+          {authentication?.expiresAt && <small>Access token expires {formatDate(authentication.expiresAt)}</small>}
+          <div className="provider-note">
+            Deckwraith talks to OpenAI directly. Importing copies your existing Codex sign-in into the Mac Keychain; inference does not start Codex or a local proxy.
+          </div>
+          <div className="button-cluster">
+            <button disabled={busy} onClick={() => {
+              void onImport().catch((reason: unknown) => setLocalError(messageOf(reason)));
+            }}>{connected ? "Replace from existing sign-in" : "Use existing sign-in"}</button>
+            {connected && <button className="danger" disabled={busy} onClick={() => {
+              void onDisconnect().catch((reason: unknown) => setLocalError(messageOf(reason)));
+            }}>Disconnect</button>}
+          </div>
+        </div>
+        {localError && <div className="setup-error"><b>That didn’t work.</b> {localError}</div>}
+        <div className="action-row"><Dialog.Close asChild><button disabled={busy}>Done</button></Dialog.Close></div>
+      </Dialog.Content>
+    </Dialog.Portal>
+  </Dialog.Root>;
+}
+
 function DeckOnboarding({ path, busy, error, onPathChange, onChooseFolder, onInitialize }: {
   path: string;
   busy: boolean;
@@ -900,6 +987,17 @@ function PanelHeading({ eyebrow, title, detail }: { eyebrow: string; title: stri
 
 function Metric({ label, value }: { label: string; value: string }) { return <div className="metric"><span>{label}</span><b>{value}</b></div>; }
 function StatusPill({ value }: { value: string }) { return <span className={clsx("status-pill", value)}>{value}</span>; }
+function providerStateLabel(value: string) {
+  return ({
+    missing: "Not connected",
+    ready: "Ready",
+    expiring: "Refresh soon",
+    expired: "Expired",
+    refreshing: "Refreshing",
+    rejected: "Reconnect",
+    error: "Needs attention",
+  } as Record<string, string>)[value] ?? value;
+}
 function shortId(value: string) { return value.slice(0, 10); }
 function formatDate(value: string) { return new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(new Date(value)); }
 function messageOf(value: unknown) { return value instanceof Error ? value.message : String(value); }

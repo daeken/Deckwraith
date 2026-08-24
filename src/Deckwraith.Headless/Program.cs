@@ -19,10 +19,6 @@ using Deckwraith.Persistence.State;
 using Deckwraith.PowerShell.Hosting;
 using Deckwraith.PowerShell.Serialization;
 using Deckwraith.Providers.Abstractions;
-using Deckwraith.Providers.Anthropic;
-using Deckwraith.Providers.Google;
-using Deckwraith.Providers.OpenAI;
-using Deckwraith.Providers.OpenAICompatible;
 
 using var shutdown = new CancellationTokenSource();
 Console.CancelKeyPress += (_, eventArgs) =>
@@ -583,50 +579,8 @@ internal static class DeckwraithCli
 
     private static string? ParseOptionalHaunt(string value) => value == "-" ? null : value;
 
-    private static ModelProviderRegistry CreateProviderRegistry() => new(
-    [
-        new CodexAppServerProvider(new CodexAppServerProviderOptions(
-            ResolveCodexExecutable(),
-            Path.GetTempPath())),
-        new AnthropicProvider(new AnthropicProviderOptions(
-            ReadUriEnvironment("DECKWRAITH_ANTHROPIC_BASE_URL", "https://api.anthropic.com/"))),
-        new GoogleGeminiProvider(new GoogleGeminiProviderOptions(
-            ReadUriEnvironment(
-                "DECKWRAITH_GOOGLE_BASE_URL",
-                "https://generativelanguage.googleapis.com/"))),
-        new OpenAICompatibleProvider(new OpenAICompatibleProviderOptions(
-            ReadUriEnvironment("DECKWRAITH_OPENAI_BASE_URL", "https://api.openai.com/"))),
-        new OpenAICompatibleProvider(new OpenAICompatibleProviderOptions(
-            ReadUriEnvironment("DECKWRAITH_OPENAI_BASE_URL", "https://api.openai.com/"),
-            ProviderId: "openai-api")),
-        new OpenAICompatibleProvider(new OpenAICompatibleProviderOptions(
-            ReadUriEnvironment("DECKWRAITH_XAI_BASE_URL", "https://api.x.ai/"),
-            ApiKeyEnvironment: "XAI_API_KEY",
-            ProviderId: "xai-api")),
-        new OpenAICompatibleProvider(new OpenAICompatibleProviderOptions(
-            ReadUriEnvironment("DECKWRAITH_ZAI_BASE_URL", "https://api.z.ai/api/v1/"),
-            ApiKeyEnvironment: "ZAI_API_KEY",
-            ResponsesPath: "responses",
-            ProviderId: "zai-api")),
-    ]);
-
-    private static Uri ReadUriEnvironment(string name, string fallback)
-    {
-        var configured = Environment.GetEnvironmentVariable(name);
-        return new Uri(string.IsNullOrWhiteSpace(configured) ? fallback : configured);
-    }
-
-    private static string ResolveCodexExecutable()
-    {
-        var configured = Environment.GetEnvironmentVariable("DECKWRAITH_CODEX_PATH");
-        if (!string.IsNullOrWhiteSpace(configured))
-        {
-            return configured;
-        }
-
-        const string desktopPath = "/Applications/ChatGPT.app/Contents/Resources/codex";
-        return File.Exists(desktopPath) ? desktopPath : "codex";
-    }
+    private static ModelProviderRegistry CreateProviderRegistry() =>
+        DeckwraithHostOptions.CreateDefault().CreateProviderRegistry();
 
     private static void WriteUsage()
     {

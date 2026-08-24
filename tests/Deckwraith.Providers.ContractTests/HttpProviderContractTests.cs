@@ -94,6 +94,33 @@ public sealed class HttpProviderContractTests
     }
 
     [Fact]
+    public async Task OpenAICompatibleRejectsMalformedToolArgumentsAsCanonicalError()
+    {
+        using var credential = new EnvironmentCredential("openai-compatible-bad-tool-key");
+        var handler = new RecordingHandler("""
+            data: {"type":"response.created","response":{"id":"resp-1"}}
+
+            data: {"type":"response.output_item.done","item":{"id":"fc-1","type":"function_call","call_id":"call-1","name":"Invoke-PowerShell","arguments":"{bad-json"}}
+
+            data: {"type":"response.completed","response":{"id":"resp-1"}}
+
+            """);
+        var provider = new OpenAICompatibleProvider(
+            new OpenAICompatibleProviderOptions(
+                new Uri("https://openai.test/"),
+                credential.Name,
+                ProviderId: "xai-api"),
+            new HttpClient(handler));
+
+        var events = await CollectAsync(provider, CreateRequest("xai-api"));
+
+        Assert.IsType<ModelResponseStarted>(events[0]);
+        var error = Assert.IsType<ModelProviderError>(events[1]);
+        Assert.Equal("invalid-tool-call", error.Code);
+        Assert.DoesNotContain(events, modelEvent => modelEvent is ModelToolCallCompleted);
+    }
+
+    [Fact]
     public async Task GoogleMapsGeminiStreamToCanonicalEvents()
     {
         using var credential = new EnvironmentCredential("google-test-key");

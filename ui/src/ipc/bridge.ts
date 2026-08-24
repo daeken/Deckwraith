@@ -1,4 +1,4 @@
-import type { HostEvent } from "../state/types";
+import type { HostEvent, ProviderAuthenticationStatus, ProviderSnapshot } from "../state/types";
 import { HOST_PROTOCOL_VERSION } from "./protocol";
 
 type RequestKind = "command" | "query";
@@ -9,6 +9,7 @@ export type HostStatus = {
   deckPath: string;
   theme: ThemePreference["theme"];
   themeTokens: Record<string, string>;
+  providers: ProviderSnapshot[];
 };
 
 export type ThemePreference = {
@@ -105,6 +106,33 @@ export async function setThemePreference(
     body: JSON.stringify({ theme, tokens }),
   });
   const result = (await response.json()) as ThemePreference & { code?: string; message?: string };
+  if (!response.ok) {
+    throw new BridgeError(result.code ?? "transport", result.message ?? response.statusText);
+  }
+  return result;
+}
+
+export async function importExistingOpenAiSession(): Promise<ProviderAuthenticationStatus> {
+  const response = await fetch("/api/v1/providers/openai-subscription/import-existing", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ path: null }),
+  });
+  const result = (await response.json()) as ProviderAuthenticationStatus & {
+    code?: string;
+    message?: string;
+  };
+  if (!response.ok) {
+    throw new BridgeError(result.code ?? "transport", result.message ?? response.statusText);
+  }
+  return result;
+}
+
+export async function disconnectOpenAiSession(): Promise<ProviderSnapshot[]> {
+  const response = await fetch("/api/v1/providers/openai-subscription/disconnect", {
+    method: "POST",
+  });
+  const result = (await response.json()) as ProviderSnapshot[] & { code?: string; message?: string };
   if (!response.ok) {
     throw new BridgeError(result.code ?? "transport", result.message ?? response.statusText);
   }

@@ -9,6 +9,17 @@ export type ProviderCapabilities = {
 export type ProviderSnapshot = {
   providerId: string;
   capabilities: ProviderCapabilities;
+  authentication: ProviderAuthenticationStatus | null;
+};
+
+export type ProviderAuthenticationStatus = {
+  providerId: string;
+  displayName: string;
+  accessKind: "api" | "subscription";
+  state: "missing" | "ready" | "expiring" | "expired" | "refreshing" | "rejected" | "error";
+  message: string;
+  expiresAt: string | null;
+  accountLabel: string | null;
 };
 
 export type WraithDocument = {

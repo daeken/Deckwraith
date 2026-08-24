@@ -102,118 +102,14 @@ public sealed class OpenAICompatibleProvider : IModelProvider
             yield break;
         }
 
-        var started = false;
-        var returnedTool = false;
-        string? responseId = null;
-        await foreach (var item in ProviderHttp.ReadSseDataAsync(response, cancellationToken)
+        await foreach (var modelEvent in OpenAIResponsesEventReader.ReadAsync(
+            response,
+            ProviderId,
+            request.RequestId,
+            cancellationToken)
             .WithCancellation(cancellationToken).ConfigureAwait(false))
         {
-            var type = item.TryGetProperty("type", out var typeElement)
-                ? typeElement.GetString()
-                : null;
-            switch (type)
-            {
-                case "response.created":
-                case "response.in_progress":
-                    if (!started &&
-                        item.TryGetProperty("response", out var created) &&
-                        created.TryGetProperty("id", out var createdId))
-                    {
-                        responseId = createdId.GetString();
-                        yield return new ModelResponseStarted(responseId ?? request.RequestId);
-                        started = true;
-                    }
-
-                    break;
-                case "response.output_text.delta":
-                    yield return new ModelTextDelta(
-                        item.TryGetProperty("delta", out var delta) ? delta.GetString() ?? string.Empty : string.Empty);
-                    break;
-                case "response.output_item.done":
-                    if (item.TryGetProperty("item", out var output) &&
-                        output.TryGetProperty("type", out var outputType) &&
-                        StringComparer.Ordinal.Equals(outputType.GetString(), "function_call"))
-                    {
-                        var argumentsText = output.TryGetProperty("arguments", out var arguments)
-                            ? arguments.GetString() ?? "{}"
-                            : "{}";
-                        using var argumentsDocument = JsonDocument.Parse(argumentsText);
-                        yield return new ModelToolCallCompleted(
-                            output.TryGetProperty("call_id", out var callId)
-                                ? callId.GetString() ?? output.GetProperty("id").GetString() ?? request.RequestId
-                                : output.GetProperty("id").GetString() ?? request.RequestId,
-                            output.GetProperty("name").GetString() ?? string.Empty,
-                            argumentsDocument.RootElement.Clone());
-                        returnedTool = true;
-                    }
-
-                    break;
-                case "response.completed":
-                    var completed = item.GetProperty("response");
-                    if (!started)
-                    {
-                        responseId = completed.TryGetProperty("id", out var completedId)
-                            ? completedId.GetString()
-                            : null;
-                        yield return new ModelResponseStarted(responseId ?? request.RequestId);
-                    }
-
-                    if (completed.TryGetProperty("usage", out var usage))
-                    {
-                        yield return new ModelUsageReported(
-                            ReadInt64(usage, "input_tokens"),
-                            ReadInt64(usage, "output_tokens"),
-                            ReadInt64(usage, "input_tokens_details", "cached_tokens"));
-                    }
-
-                    yield return new ModelResponseCompleted(
-                        returnedTool ? ModelFinishReason.ToolCalls : ModelFinishReason.Stop,
-                        null);
-                    yield break;
-                case "response.failed":
-                case "error":
-                    yield return new ModelProviderError(
-                        $"{ProviderId}-stream",
-                        ReadError(item),
-                        false);
-                    yield break;
-            }
+            yield return modelEvent;
         }
-
-        yield return new ModelProviderError(
-            "incomplete-stream", "OpenAI-compatible stream ended without response.completed.", true);
-    }
-
-    private static long ReadInt64(JsonElement root, params string[] path)
-    {
-        foreach (var segment in path)
-        {
-            if (root.ValueKind is not JsonValueKind.Object ||
-                !root.TryGetProperty(segment, out root))
-            {
-                return 0;
-            }
-        }
-
-        return root.TryGetInt64(out var value) ? value : 0;
-    }
-
-    private static string ReadError(JsonElement item)
-    {
-        if (item.TryGetProperty("message", out var direct) && direct.ValueKind is JsonValueKind.String)
-        {
-            return direct.GetString()!;
-        }
-
-        if (item.TryGetProperty("response", out var response) &&
-            response.TryGetProperty("error", out var error) &&
-            error.ValueKind is JsonValueKind.Object &&
-            error.TryGetProperty("message", out var message) &&
-            message.ValueKind is JsonValueKind.String)
-        {
-            return message.GetString()!;
-        }
-
-        return "OpenAI-compatible response failed.";
     }
 }

@@ -6,6 +6,7 @@ using Deckwraith.Core.Naming;
 using Deckwraith.Core.State;
 using Deckwraith.Hosting;
 using Deckwraith.Providers.Abstractions;
+using Deckwraith.Providers.OpenAI;
 
 namespace Deckwraith.Hosting.Tests;
 
@@ -16,9 +17,11 @@ public sealed class HostBridgeEndToEndTests
     [Fact]
     public void DefaultHostRegistersFirstClassOpenAiXaiAndZaiApis()
     {
-        var providers = DeckwraithHostOptions.CreateDefault().CreateProviderRegistry().Providers;
+        var registry = DeckwraithHostOptions.CreateDefault().CreateProviderRegistry();
+        var providers = registry.Providers;
 
         Assert.Contains(providers, provider => provider.ProviderId == "anthropic");
+        Assert.Contains(providers, provider => provider is OpenAiSubscriptionProvider);
         Assert.Contains(providers, provider => provider.ProviderId == "openai-api");
         Assert.Contains(providers, provider => provider.ProviderId == "xai-api");
         Assert.Contains(providers, provider => provider.ProviderId == "zai-api");
@@ -33,7 +36,11 @@ public sealed class HostBridgeEndToEndTests
         Directory.CreateDirectory(rootPath);
         try
         {
-            var options = DeckwraithHostOptions.CreateDefault() with { EventCapacity = 128 };
+            var options = DeckwraithHostOptions.CreateDefault() with
+            {
+                EventCapacity = 128,
+                CredentialStore = new EmptyCredentialStore(),
+            };
             using (var host = await DeckwraithHost.OpenAsync(
                 rootPath, options, [new FakeProvider()]))
             {
@@ -321,5 +328,26 @@ public sealed class HostBridgeEndToEndTests
             yield return new ModelUsageReported(10, 3, 0);
             yield return new ModelResponseCompleted(ModelFinishReason.Stop, null);
         }
+    }
+
+    private sealed class EmptyCredentialStore : IProviderCredentialStore
+    {
+        public string StorageKind => "test";
+
+        public ValueTask<string?> ReadAsync(
+            string credentialId,
+            CancellationToken cancellationToken = default) =>
+            ValueTask.FromResult<string?>(null);
+
+        public ValueTask WriteAsync(
+            string credentialId,
+            string payload,
+            CancellationToken cancellationToken = default) =>
+            ValueTask.CompletedTask;
+
+        public ValueTask DeleteAsync(
+            string credentialId,
+            CancellationToken cancellationToken = default) =>
+            ValueTask.CompletedTask;
     }
 }

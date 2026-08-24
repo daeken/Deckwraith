@@ -32,10 +32,10 @@ Make one wraith complete a streamed fake-provider run without coupling durable s
 
 Acceptance: a fake-provider run survives shell replacement, reconstructs exact current context from the archive, and produces byte-stable manifests and pairwise tool elision.
 
-The first concrete adapter is a replaceable ChatGPT-subscription bridge over the supported
-Codex app-server protocol. It explicitly selects Codex's built-in `openai` provider, disables
-provider-owned tool use at the Deckwraith boundary, and has a live subscription smoke test in
-addition to deterministic notification and prompt-projection contract tests.
+The first concrete adapter now talks directly to OpenAI's ChatGPT-subscription Codex Responses
+transport. Deckwraith owns credential refresh and canonical tool exposure without starting Codex
+or a local proxy. Deterministic request/stream contracts and a manually gated live subscription
+smoke test cover the provider boundary.
 
 ## 3. PowerShell runtime — implemented
 
