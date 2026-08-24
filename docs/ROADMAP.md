@@ -1,6 +1,8 @@
 # Delivery roadmap
 
-The specification's eight vertical milestones remain the release spine. The first four are the immediate build plan; each ends in an independently usable, end-to-end tested repository.
+The specification's eight vertical milestones are implemented and remain the release spine. Each
+ended in an independently usable, end-to-end tested repository; the remaining v1 gate is a live
+inside-out bootstrap through the ChatGPT-subscription provider.
 
 ## 1. State spine — implemented
 
@@ -123,7 +125,7 @@ orphaned operation lifecycles without replay, rebuilds stale or corrupt projecti
 interrupted shells. Non-destructive reversal creates a recovery branch and an inverse checkpoint;
 all three operations are available through the headless host.
 
-## 8. Product shell and release
+## 8. Product shell and release — implemented
 
 Ship the inspectable desktop product without making the renderer an authority boundary.
 
@@ -137,19 +139,42 @@ Acceptance: the packaged shell creates and resumes a wraith, observes live model
 edits a deckbook through host commands, survives renderer reconnect, changes provider without
 changing identity, and the same lifecycle remains green through the headless host on Linux.
 
+The .NET host now exposes a versioned loopback-only command/query/event protocol with buffered
+event replay, gap detection, and idempotent mutation request IDs. The Electron renderer covers
+onboarding, identities (including personality and open calibration), runs and shell epochs,
+deckbooks, archives, checkpoints, and reversible wraith archival. Electron runs with context
+isolation, renderer sandboxing, Node integration disabled, a restrictive CSP, and no durable-state
+authority.
+
+Concrete Anthropic, Gemini, OpenAI-compatible Responses, and ChatGPT-subscription adapters remain
+behind the shared provider contracts. CI proves the headless graph on Linux, renderer/protocol
+compatibility, and self-contained desktop publishes on macOS, Linux, and Windows. Tag builds create
+native Electron bundles; dependency audits and packaged macOS ZIP/DMG acceptance are green.
+
 ## Package boundaries
 
-The repository grows assemblies only when a milestone needs them:
+The implemented assembly boundaries are:
 
 ```text
-Deckwraith.Headless (composition root)
-    └── Deckwraith.Application (use cases and ports)
-            ├── Deckwraith.Core (domain values and invariants)
-            └── Deckwraith.Persistence (JSON/JSONL, artifacts, Git)
-                    └── Deckwraith.Core
+Deckwraith.Desktop / Deckwraith.Headless (composition roots)
+    └── Deckwraith.Hosting (versioned commands, queries, snapshots, events)
+        └── Deckwraith.Application (use cases and ports)
+            └── Deckwraith.Core (domain values and invariants)
+
+Infrastructure beside Core/Application:
+    Persistence       JSON/JSONL, durable values, artifacts, Git
+    Providers.*       provider contracts and concrete adapters
+    PowerShell        runspaces, compiled commands, authored tools
+    Notebooks         cells, ordering, execution, bounded context
+    Kernels.*         language-neutral contract, PowerShell, C#/Roslyn
+    Mcp               stdio clients, assignments, catalogs
+    Continuity        compaction, reconciliation, Git reversal
 ```
 
-Milestones 2–4 add `Providers.Abstractions`, `Providers.OpenAI`, `PowerShell`, `Notebooks`, `Kernels.Abstractions`, and `Kernels.PowerShell` beside—not inside—Core. Desktop, concrete providers, kernels, and process-launching details never enter the domain model. Tests mirror those boundaries, with integration tests owning complete vertical scenarios.
+Desktop, concrete providers, kernels, persistence, and process-launching details never enter the
+domain model. Tests mirror these boundaries, with focused contract suites and integration tests
+owning complete vertical scenarios. `eng/verify-headless.sh` fails if Electron or Chromium enters
+the portable headless publish graph.
 
 ## Decisions made for milestone 1
 

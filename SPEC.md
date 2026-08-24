@@ -1,6 +1,6 @@
 # Deckwraith Architecture Specification
 
-Status: Proposed architecture for v1
+Status: Implemented v1 release candidate
 Last updated: 2026-08-23
 
 ## 1. Purpose

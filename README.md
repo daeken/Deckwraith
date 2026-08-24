@@ -1,85 +1,85 @@
 # Deckwraith
 
-Deckwraith is a local-first runtime for durable autonomous agent identities. Models are replaceable shells; identity, current context, archives, tools, and executable deckbooks belong to the wraith.
+Deckwraith is a local-first runtime for durable autonomous agent identities. Models are
+replaceable shells; identity, current context, archives, tools, executable deckbooks, and
+recovery history belong to the wraith.
 
-The repository currently implements the first four milestones: the **state spine**,
-the **inference spine**, the **PowerShell runtime**, and **linear deckbooks**. It provides:
+The repository is a v1 release candidate. All eight delivery milestones are implemented:
 
-- Git-backed deck-state initialization with restrictive local permissions and no automatic remote.
-- Portable, case-insensitive canonical names and reserved aliases.
-- Sparse JSON identities and explicit recovery-safe wraith/haunt renames.
-- Hash-checked, append-only, segmented per-wraith JSONL archives.
-- Content-addressed haunt artifacts.
-- Coherent Git checkpoints for every public mutation.
-- Provider-neutral streaming requests and events, persistent runs and disposable shells.
-- A Git-backed materialized `context.json`, deterministic context manifests, and pairwise tool elision.
-- A fake-provider end-to-end lifecycle and a replaceable ChatGPT-subscription bridge through
-  the supported Codex app-server protocol.
-- Dedicated full-language hosted PowerShell runspaces with object-native compiled commands.
-- Explicit run-, wraith-, and haunt-scoped non-volatile values with content hashes and CAS.
-- Cold runspace replacement without replay and atomic reload of wraith-authored `.ps1` tools.
-- Git-readable named deckbook cells with sparse total ordering and stable rename aliases.
-- Exact linear-suffix staleness for insert, edit, move, delete, and rerun operations.
-- Immutable hash-addressed cell outputs, kernel/version/epoch provenance, and explicit
-  run-cell/run-remaining execution through a language-neutral kernel contract.
-- Bounded model-context projections containing pins, the active-cell window, current outputs,
-  and a compact index rather than the entire deckbook.
-- A small headless command surface and end-to-end tests.
+- Git-backed wraith and haunt state with canonical names, reserved rename aliases, archival,
+  append-only private archives, content-addressed artifacts, and coherent checkpoints.
+- Provider-neutral streamed inference with durable runs, disposable shells, materialized
+  `context.json`, deterministic context manifests, and paired tool elision.
+- ChatGPT-subscription, Anthropic, Gemini, and OpenAI-compatible provider adapters.
+- Dedicated hosted PowerShell runspaces with object-native commands, durable scoped values,
+  authored tools, MCP discovery, and cold replacement without replay.
+- Git-readable linear deckbooks with explicit execution, exact suffix staleness, retained output
+  provenance, bounded context projection, and PowerShell and C# kernels.
+- Oldest-prefix compaction, archive-driven startup reconciliation, outcome-unknown recovery, and
+  non-destructive Git reversal.
+- A versioned loopback host bridge and an inspectable Electron/React desktop shell.
+- Linux headless dependency verification and macOS, Linux, and Windows release packaging.
 
-See [SPEC.md](SPEC.md) for the full architecture and [docs/ROADMAP.md](docs/ROADMAP.md) for the delivery plan and package boundaries.
+See [SPEC.md](SPEC.md) for the architecture, [docs/ROADMAP.md](docs/ROADMAP.md) for the delivery
+spine, [docs/OPERATIONS.md](docs/OPERATIONS.md) for provider and desktop setup, and
+[docs/V1-ACCEPTANCE.md](docs/V1-ACCEPTANCE.md) for the release evidence.
 
-## Build and test
+## Build and verify
+
+Deckwraith requires the .NET SDK pinned by `global.json` and Node.js 24 for the renderer.
 
 ```text
-dotnet build Deckwraith.slnx
-dotnet test Deckwraith.slnx
+dotnet restore Deckwraith.slnx
+dotnet test Deckwraith.slnx -c Release
+
+cd ui
+npm ci
+npm run lint
+npm run build
 ```
 
-## State-spine CLI
+The portable release gate runs every test project, publishes the headless host, and rejects
+desktop-only dependencies in its output:
 
-The CLI operates on a state repository separate from this source tree:
+```text
+./eng/verify-headless.sh osx-arm64
+```
+
+Package the native Electron application on the current host with:
+
+```text
+./eng/package-desktop.sh 1.0.0
+```
+
+## Start a deck
+
+The headless CLI operates on a sensitive state repository separate from this source tree:
 
 ```text
 dotnet run --project src/Deckwraith.Headless -- init /path/to/deck-state
 dotnet run --project src/Deckwraith.Headless -- create-haunt /path/to/deck-state deckwraith
 dotnet run --project src/Deckwraith.Headless -- create-wraith /path/to/deck-state wraith1
-dotnet run --project src/Deckwraith.Headless -- rename-wraith /path/to/deck-state wraith1 vesper
-dotnet run --project src/Deckwraith.Headless -- resolve-wraith /path/to/deck-state wraith1
 ```
 
-## Subscription-backed inference
+Identity documents include top-level `personality` and open string-valued `calibration` fields.
+`calibration.register` is present by default; operators and wraiths may add entries such as
+`opsec` without a schema migration.
 
-Sign in to Codex with ChatGPT as described in the
-[official OpenAI authentication documentation](https://developers.openai.com/codex/auth),
-then start and continue a durable run:
+After signing Codex in with ChatGPT, one command can start a durable run and execute its first
+turn through the subscription bridge:
 
 ```text
-dotnet run --project src/Deckwraith.Headless -- start-run /path/to/deck-state wraith1 deckwraith gpt-5.6-terra "Implement the next change"
-dotnet run --project src/Deckwraith.Headless -- turn /path/to/deck-state wraith1 RUN_ID "Begin."
-dotnet run --project src/Deckwraith.Headless -- replace-shell /path/to/deck-state wraith1 RUN_ID gpt-5.6-terra "fresh context window"
+dotnet run --project src/Deckwraith.Headless -- run-openai /path/to/deck-state wraith1 deckwraith gpt-5.6-sol "Inspect this project and propose the next coherent improvement" "Begin."
+```
+
+The command returns the run ID. Continue and complete it explicitly:
+
+```text
+dotnet run --project src/Deckwraith.Headless -- turn /path/to/deck-state wraith1 RUN_ID "Continue."
 dotnet run --project src/Deckwraith.Headless -- complete-run /path/to/deck-state wraith1 RUN_ID "objective achieved"
 ```
 
-For a one-shot smoke test, `run-openai` combines those operations. Deckwraith launches
-[`codex app-server`](https://developers.openai.com/codex/app-server) with Codex's reserved
-built-in `openai` provider, injects the complete durable identity and current context, and
-keeps tool execution outside the adapter. Set `DECKWRAITH_CODEX_PATH` when `codex` is not on
-`PATH` and the ChatGPT desktop-bundled executable is unavailable.
-
-## Hosted PowerShell
-
-The headless host can execute one structured PowerShell invocation for a wraith:
-
-```text
-dotnet run --project src/Deckwraith.Headless -- powershell /path/to/deck-state wraith1 - deckwraith "Get-DwRuntime"
-```
-
-Hosted sessions expose `Get-DwState`, `Set-DwState`, `Remove-DwState`, `Get-DwRuntime`,
-`Get-DwTool`, and `Reload-DwTools`. Library hosts retain one runspace per awake wraith;
-the one-shot CLI intentionally disposes its runspace when the process exits. Ordinary variables
-are volatile. Values written through the state commands survive cold replacement and process loss.
-
-## Linear deckbooks
+## Execute a deckbook
 
 Create Git-readable cells and explicitly execute one cell or a remaining suffix:
 
@@ -90,8 +90,16 @@ dotnet run --project src/Deckwraith.Headless -- run-remaining /path/to/deck-stat
 dotnet run --project src/Deckwraith.Headless -- deckbook-context /path/to/deck-state wraith1 deckwraith answer
 ```
 
-`Deckwraith.Notebooks` also exposes insert, edit, move, rename, pin, delete, run-cell,
-run-remaining, and bounded-context APIs. Milestone 4 supplies the PowerShell cell kernel;
-the C# kernel remains milestone 5.
+Edits only mark the affected linear suffix stale; they never execute cells. Prior output documents
+remain inspectable, including their source hash, kernel version, and cold-replacement epoch.
 
-Treat every deck-state repository as credential-equivalent data. Deckwraith does not add or push Git remotes.
+## Security posture
+
+Treat every deck-state repository as credential-equivalent data. Deckwraith creates no Git remote
+and never pushes deck state automatically, but archives, Git objects, tool arguments, results,
+context, and artifacts may all contain secrets. Protect clones and backups just as carefully as the
+working repository.
+
+V1 assumes one owning host per deck. In-process lifecycle leases serialize run start and wraith
+archival, while independent CLI or desktop processes pointed at the same deck are not a supported
+concurrent-write topology.
