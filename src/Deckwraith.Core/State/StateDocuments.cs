@@ -32,12 +32,13 @@ public sealed record WraithDocument(
     string Name,
     string? DisplayLabel,
     IReadOnlyList<string> Aliases,
-    DateTimeOffset CreatedAt)
+    DateTimeOffset CreatedAt,
+    DateTimeOffset? ArchivedAt = null)
 {
-    public const int CurrentSchemaVersion = 1;
+    public const int CurrentSchemaVersion = 2;
 
     public static WraithDocument Create(CanonicalName name, DateTimeOffset now) =>
-        new(CurrentSchemaVersion, name.Value, null, [], now);
+        new(CurrentSchemaVersion, name.Value, null, [], now, null);
 }
 
 public sealed record IdentityDocument

@@ -31,7 +31,15 @@ public interface IDeckStateStore
 
     Task<CanonicalName> ResolveHauntAsync(CanonicalName name, CancellationToken cancellationToken);
 
+    ValueTask<IAsyncDisposable> AcquireWraithLifecycleLeaseAsync(
+        CanonicalName name,
+        CancellationToken cancellationToken);
+
     Task<IdentityDocument> ReadIdentityAsync(CanonicalName name, CancellationToken cancellationToken);
+
+    Task<WraithDocument> ReadWraithAsync(
+        CanonicalName name,
+        CancellationToken cancellationToken);
 
     Task<IReadOnlyList<WraithDocument>> ListWraithsAsync(CancellationToken cancellationToken);
 
@@ -40,6 +48,12 @@ public interface IDeckStateStore
     Task<IdentityDocument> WriteIdentityAsync(
         CanonicalName name,
         IdentityDocument identity,
+        DateTimeOffset now,
+        CancellationToken cancellationToken);
+
+    Task<WraithDocument> SetWraithArchivedAsync(
+        CanonicalName name,
+        bool archived,
         DateTimeOffset now,
         CancellationToken cancellationToken);
 

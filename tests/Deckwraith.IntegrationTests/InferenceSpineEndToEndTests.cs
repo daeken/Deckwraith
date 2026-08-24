@@ -281,8 +281,26 @@ public sealed class InferenceSpineEndToEndTests
                 "wraith1", null, "Conflicting objective", "capture", "test-model"));
         Assert.Contains(first.Run.RunId, conflict.Message, StringComparison.Ordinal);
 
+        using var lifecycle = new StateSpine(
+            deckState,
+            archive,
+            new ContentAddressedArtifactStore(temporaryDirectory.Path),
+            checkpoints,
+            new FixedClock());
+        var archiveConflict = await Assert.ThrowsAsync<Deckwraith.Core.State.DeckStateException>(() =>
+            lifecycle.ArchiveWraithAsync("wraith1", CancellationToken.None));
+        Assert.Contains(first.Run.RunId, archiveConflict.Message, StringComparison.Ordinal);
+
         await runtime.CompleteRunAsync(
             "wraith1", first.Run.RunId, "first objective complete", CancellationToken.None);
+        var archived = await lifecycle.ArchiveWraithAsync("wraith1", CancellationToken.None);
+        Assert.NotNull(archived.Value.ArchivedAt);
+        var archivedConflict = await Assert.ThrowsAsync<Deckwraith.Core.State.DeckStateException>(() =>
+            runtime.StartRunAsync(
+                "wraith1", null, "Archived objective", "capture", "test-model"));
+        Assert.Contains("must be restored", archivedConflict.Message, StringComparison.Ordinal);
+        var restored = await lifecycle.RestoreWraithAsync("wraith1", CancellationToken.None);
+        Assert.Null(restored.Value.ArchivedAt);
         var second = await runtime.StartRunAsync(
             "wraith1", null, "Second objective", "capture", "test-model");
 

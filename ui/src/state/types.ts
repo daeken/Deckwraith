@@ -16,6 +16,7 @@ export type WraithDocument = {
   displayLabel: string | null;
   aliases: string[];
   createdAt: string;
+  archivedAt: string | null;
 };
 
 export type HauntDocument = WraithDocument;

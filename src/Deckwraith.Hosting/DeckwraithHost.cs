@@ -62,6 +62,8 @@ public sealed class DeckwraithHost : IDisposable
     [
         "deck.initialize",
         "wraith.create",
+        "wraith.archive",
+        "wraith.restore",
         "haunt.create",
         "identity.update",
         "run.start",
@@ -386,6 +388,10 @@ public sealed class DeckwraithHost : IDisposable
         },
         "wraith.create" => await _state.CreateWraithAsync(
             Read<CreateNamePayload>(payload).Name, cancellationToken).ConfigureAwait(false),
+        "wraith.archive" => await _state.ArchiveWraithAsync(
+            Read<WraithPayload>(payload).Wraith, cancellationToken).ConfigureAwait(false),
+        "wraith.restore" => await _state.RestoreWraithAsync(
+            Read<WraithPayload>(payload).Wraith, cancellationToken).ConfigureAwait(false),
         "haunt.create" => await _state.CreateHauntAsync(
             Read<CreateNamePayload>(payload).Name, cancellationToken).ConfigureAwait(false),
         "identity.update" => await UpdateIdentityAsync(payload, cancellationToken).ConfigureAwait(false),

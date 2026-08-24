@@ -64,6 +64,10 @@ internal static class DeckwraithCli
                 },
                 "create-wraith" when arguments.Length == 3 =>
                     await state.CreateWraithAsync(arguments[2], cancellationToken).ConfigureAwait(false),
+                "archive-wraith" when arguments.Length == 3 =>
+                    await state.ArchiveWraithAsync(arguments[2], cancellationToken).ConfigureAwait(false),
+                "restore-wraith" when arguments.Length == 3 =>
+                    await state.RestoreWraithAsync(arguments[2], cancellationToken).ConfigureAwait(false),
                 "create-haunt" when arguments.Length == 3 =>
                     await state.CreateHauntAsync(arguments[2], cancellationToken).ConfigureAwait(false),
                 "rename-wraith" when arguments.Length == 4 =>
@@ -603,6 +607,7 @@ internal static class DeckwraithCli
     {
         Console.Error.WriteLine(
             "Usage: deckwraith <init|create-wraith|create-haunt|rename-wraith|rename-haunt|" +
+            "archive-wraith|restore-wraith|" +
             "resolve-wraith|resolve-haunt|identity|archive|store-artifact|start-run|turn|run-openai|run-provider|" +
             "replace-shell|complete-run|cancel-run|" +
             "powershell|deckbook|add-cell|run-cell|run-remaining|deckbook-context|" +

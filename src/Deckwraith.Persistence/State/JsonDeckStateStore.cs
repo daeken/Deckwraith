@@ -1,5 +1,7 @@
+using System.Collections.Concurrent;
 using Deckwraith.Application.Abstractions;
 using Deckwraith.Core.Naming;
+using Deckwraith.Core.Runs;
 using Deckwraith.Core.State;
 using Deckwraith.Persistence.Json;
 
@@ -7,6 +9,8 @@ namespace Deckwraith.Persistence.State;
 
 public sealed class JsonDeckStateStore : IDeckStateStore
 {
+    private static readonly ConcurrentDictionary<string, SemaphoreSlim> LifecycleGates = new(
+        StringComparer.Ordinal);
     private readonly string _deckManifestPath;
 
     public JsonDeckStateStore(string rootPath)
@@ -162,6 +166,17 @@ public sealed class JsonDeckStateStore : IDeckStateStore
         return Resolve(name, "haunts", manifest.HauntAliases, "haunt");
     }
 
+    public async ValueTask<IAsyncDisposable> AcquireWraithLifecycleLeaseAsync(
+        CanonicalName name,
+        CancellationToken cancellationToken)
+    {
+        var resolved = await ResolveWraithAsync(name, cancellationToken).ConfigureAwait(false);
+        var key = RootPath + "\0" + resolved.Value;
+        var gate = LifecycleGates.GetOrAdd(key, static _ => new SemaphoreSlim(1, 1));
+        await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        return new LifecycleLease(gate);
+    }
+
     public async Task<IdentityDocument> ReadIdentityAsync(
         CanonicalName name,
         CancellationToken cancellationToken)
@@ -169,6 +184,16 @@ public sealed class JsonDeckStateStore : IDeckStateStore
         var resolved = await ResolveWraithAsync(name, cancellationToken).ConfigureAwait(false);
         return await AtomicJsonFile.ReadAsync<IdentityDocument>(
             Path.Combine(EntityPath("agents", resolved), "identity.json"), cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    public async Task<WraithDocument> ReadWraithAsync(
+        CanonicalName name,
+        CancellationToken cancellationToken)
+    {
+        var resolved = await ResolveWraithAsync(name, cancellationToken).ConfigureAwait(false);
+        return await AtomicJsonFile.ReadAsync<WraithDocument>(
+            Path.Combine(EntityPath("agents", resolved), "agent.json"), cancellationToken)
             .ConfigureAwait(false);
     }
 
@@ -234,6 +259,65 @@ public sealed class JsonDeckStateStore : IDeckStateStore
             updated,
             cancellationToken).ConfigureAwait(false);
         return updated;
+    }
+
+    public async Task<WraithDocument> SetWraithArchivedAsync(
+        CanonicalName name,
+        bool archived,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        var resolved = await ResolveWraithAsync(name, cancellationToken).ConfigureAwait(false);
+        await using var lease = await AcquireWraithLifecycleLeaseAsync(
+            resolved, cancellationToken).ConfigureAwait(false);
+        var path = Path.Combine(EntityPath("agents", resolved), "agent.json");
+        var document = await AtomicJsonFile.ReadAsync<WraithDocument>(path, cancellationToken)
+            .ConfigureAwait(false);
+        if (archived == (document.ArchivedAt is not null))
+        {
+            throw new DeckStateException(
+                $"Wraith '{resolved}' is already {(archived ? "archived" : "active")}.");
+        }
+
+        if (archived)
+        {
+            var runsPath = Path.Combine(EntityPath("agents", resolved), "runs");
+            foreach (var runPath in Directory.EnumerateFiles(
+                runsPath, "run.json", SearchOption.AllDirectories).Order(StringComparer.Ordinal))
+            {
+                var run = await AtomicJsonFile.ReadAsync<RunDocument>(runPath, cancellationToken)
+                    .ConfigureAwait(false);
+                if (run.Status is not (RunStatus.Completed or RunStatus.Cancelled or RunStatus.Failed))
+                {
+                    throw new DeckStateException(
+                        $"Wraith '{resolved}' cannot be archived while run '{run.RunId}' is active.");
+                }
+            }
+        }
+
+        var updated = document with
+        {
+            SchemaVersion = WraithDocument.CurrentSchemaVersion,
+            ArchivedAt = archived ? now : null,
+        };
+        await AtomicJsonFile.WriteAsync(path, updated, cancellationToken).ConfigureAwait(false);
+        return updated;
+    }
+
+    private sealed class LifecycleLease(SemaphoreSlim gate) : IAsyncDisposable
+    {
+        private bool _disposed;
+
+        public ValueTask DisposeAsync()
+        {
+            if (!_disposed)
+            {
+                _disposed = true;
+                gate.Release();
+            }
+
+            return ValueTask.CompletedTask;
+        }
     }
 
     public Task<RenameIntent> RenameWraithAsync(

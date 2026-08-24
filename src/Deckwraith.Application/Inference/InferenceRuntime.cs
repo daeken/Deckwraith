@@ -94,6 +94,16 @@ public sealed class InferenceRuntime : IDisposable
         ArgumentException.ThrowIfNullOrWhiteSpace(model);
         var agent = await _deckState.ResolveWraithAsync(
             CanonicalName.Parse(wraith), cancellationToken).ConfigureAwait(false);
+        await using var lifecycleLease = await _deckState.AcquireWraithLifecycleLeaseAsync(
+            agent, cancellationToken).ConfigureAwait(false);
+        var wraithDocument = await _deckState.ReadWraithAsync(agent, cancellationToken)
+            .ConfigureAwait(false);
+        if (wraithDocument.ArchivedAt is not null)
+        {
+            throw new DeckStateException(
+                $"Wraith '{agent}' is archived and must be restored before starting a run.");
+        }
+
         var gate = Gate(agent);
         await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try

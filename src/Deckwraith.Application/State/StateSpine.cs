@@ -254,6 +254,16 @@ public sealed class StateSpine : IDisposable
             return new StateMutation<IdentityDocument>(updated, commit);
         }, cancellationToken);
 
+    public Task<StateMutation<WraithDocument>> ArchiveWraithAsync(
+        string wraith,
+        CancellationToken cancellationToken = default) =>
+        SetWraithArchivedAsync(wraith, archived: true, cancellationToken);
+
+    public Task<StateMutation<WraithDocument>> RestoreWraithAsync(
+        string wraith,
+        CancellationToken cancellationToken = default) =>
+        SetWraithArchivedAsync(wraith, archived: false, cancellationToken);
+
     public async Task<IReadOnlyList<ArchiveRecord>> ReadArchiveAsync(
         string name,
         CancellationToken cancellationToken = default)
@@ -263,6 +273,31 @@ public sealed class StateSpine : IDisposable
     }
 
     public void Dispose() => _gate.Dispose();
+
+    private Task<StateMutation<WraithDocument>> SetWraithArchivedAsync(
+        string wraith,
+        bool archived,
+        CancellationToken cancellationToken) =>
+        WithMutationLockAsync(async () =>
+        {
+            await RecoverIfNeededAsync(cancellationToken).ConfigureAwait(false);
+            var resolved = await _state.ResolveWraithAsync(
+                CanonicalName.Parse(wraith), cancellationToken).ConfigureAwait(false);
+            var updated = await _state.SetWraithArchivedAsync(
+                resolved, archived, _clock.UtcNow, cancellationToken).ConfigureAwait(false);
+            await _archive.AppendAsync(
+                Event(
+                    resolved,
+                    archived ? "wraith.archived" : "wraith.restored",
+                    new { name = resolved.Value, updated.ArchivedAt }),
+                cancellationToken).ConfigureAwait(false);
+            var commit = await _checkpoints.CheckpointAsync(
+                archived ? "wraith-archived" : "wraith-restored",
+                resolved,
+                null,
+                cancellationToken).ConfigureAwait(false);
+            return new StateMutation<WraithDocument>(updated, commit);
+        }, cancellationToken);
 
     private static ArchiveEvent Event(
         CanonicalName wraith,

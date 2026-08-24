@@ -135,6 +135,19 @@ public sealed class HostBridgeEndToEndTests
                 Assert.Contains("kernel.value", eventNames);
                 Assert.Contains("kernel.completed", eventNames);
 
+                AssertSuccess(await host.ExecuteAsync(Command(
+                    "run.complete",
+                    new { wraith = "lumen", runId, reason = "bridge acceptance complete" },
+                    "complete-run")));
+                var archived = await host.ExecuteAsync(Command(
+                    "wraith.archive", new { wraith = "lumen" }, "archive-wraith"));
+                AssertSuccess(archived);
+                Assert.NotEqual(
+                    JsonValueKind.Null,
+                    archived.Result!.Value.GetProperty("value").GetProperty("archivedAt").ValueKind);
+                AssertSuccess(await host.ExecuteAsync(Command(
+                    "wraith.restore", new { wraith = "lumen" }, "restore-wraith")));
+
                 var checkpoints = await host.ExecuteAsync(Query(
                     "checkpoint.snapshot", new { limit = 20 }, "checkpoints"));
                 AssertSuccess(checkpoints);

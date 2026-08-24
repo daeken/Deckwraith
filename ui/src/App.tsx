@@ -36,9 +36,10 @@ export function App() {
       const nextDeck = await query<DeckSnapshot>("deck.snapshot");
       setInitialized(true);
       setDeck(nextDeck);
-      const nextWraith = selectedWraith && nextDeck.wraiths.some((item) => item.name === selectedWraith)
+      const activeWraiths = nextDeck.wraiths.filter((item) => !item.archivedAt);
+      const nextWraith = selectedWraith && activeWraiths.some((item) => item.name === selectedWraith)
         ? selectedWraith
-        : nextDeck.wraiths[0]?.name ?? "";
+        : activeWraiths[0]?.name ?? "";
       const nextHaunt = selectedHaunt && nextDeck.haunts.some((item) => item.name === selectedHaunt)
         ? selectedHaunt
         : nextDeck.haunts[0]?.name ?? "";
@@ -148,7 +149,7 @@ export function App() {
         </div>
         <div className="section-label">Wraiths</div>
         <nav className="wraith-list">
-          {deck?.wraiths.map((item) => (
+          {deck?.wraiths.filter((item) => !item.archivedAt).map((item) => (
             <button
               key={item.name}
               className={clsx("wraith-button", item.name === selectedWraith && "selected")}
@@ -168,6 +169,20 @@ export function App() {
             setSelectedWraith(name.toLowerCase());
           })}
         />
+        {deck?.wraiths.some((item) => item.archivedAt) && <>
+          <div className="section-label archived-label">Archived</div>
+          <nav className="wraith-list archived-list">
+            {deck.wraiths.filter((item) => item.archivedAt).map((item) => (
+              <button key={item.name} className="wraith-button" disabled={busy} onClick={() => void mutate(async () => {
+                await command("wraith.restore", { wraith: item.name });
+                setSelectedWraith(item.name);
+              })}>
+                <span className="status-dot" />
+                <span><b>{item.displayLabel ?? item.name}</b><small>restore identity</small></span>
+              </button>
+            ))}
+          </nav>
+        </>}
         <div className="sidebar-spacer" />
         <div className="section-label">Haunt</div>
         <select value={selectedHaunt} onChange={(event) => setSelectedHaunt(event.target.value)}>
@@ -218,9 +233,17 @@ export function App() {
               ))}
             </Tabs.List>
             <Tabs.Content className="tab-content" value="identity">
-              <IdentityEditor identity={wraith.identity} busy={busy} onSave={(identity) => mutate(async () => {
-                await command("identity.update", { wraith: selectedWraith, identity });
-              })} />
+              <IdentityEditor
+                identity={wraith.identity}
+                busy={busy}
+                onSave={(identity) => mutate(async () => {
+                  await command("identity.update", { wraith: selectedWraith, identity });
+                })}
+                onArchive={() => mutate(async () => {
+                  await command("wraith.archive", { wraith: selectedWraith });
+                  setSelectedWraith("");
+                })}
+              />
             </Tabs.Content>
             <Tabs.Content className="tab-content" value="runs">
               <RunsPanel
@@ -266,10 +289,12 @@ function IdentityEditor({
   identity,
   busy,
   onSave,
+  onArchive,
 }: {
   identity: IdentityDocument;
   busy: boolean;
   onSave: (identity: IdentityDocument) => Promise<void>;
+  onArchive: () => Promise<void>;
 }) {
   const [draft, setDraft] = useState(identity);
   useEffect(() => setDraft(identity), [identity]);
@@ -305,7 +330,14 @@ function IdentityEditor({
         <PanelHeading eyebrow="Still becoming" title="Open questions" />
         <textarea value={draft.openQuestions.join("\n")} onChange={(event) => set("openQuestions", lineList(event.target.value))} />
       </section>
-      <div className="action-row wide"><button className="primary" disabled={busy} onClick={() => void onSave(draft)}>Checkpoint identity</button></div>
+      <div className="action-row wide">
+        <button className="danger" disabled={busy} onClick={() => {
+          if (window.confirm(`Archive ${identity.name}? Its history remains local and restorable.`)) {
+            void onArchive();
+          }
+        }}>Archive wraith</button>
+        <button className="primary" disabled={busy} onClick={() => void onSave(draft)}>Checkpoint identity</button>
+      </div>
     </div>
   );
 }
