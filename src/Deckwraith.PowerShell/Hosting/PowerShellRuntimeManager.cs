@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Management.Automation;
 using System.Management.Automation.Runspaces;
+using System.Reflection;
 using System.Security.Cryptography;
 using Deckwraith.Application.Abstractions;
 using Deckwraith.Application.State;
@@ -14,10 +15,10 @@ namespace Deckwraith.PowerShell.Hosting;
 
 public sealed class PowerShellRuntimeManager : IDisposable
 {
-    private static readonly string[] DefaultModules =
+    private static readonly Assembly[] DefaultModuleAssemblies =
     [
-        "Microsoft.PowerShell.Management",
-        "Microsoft.PowerShell.Utility",
+        typeof(Microsoft.PowerShell.Commands.GetChildItemCommand).Assembly,
+        typeof(Microsoft.PowerShell.Commands.ConvertFromJsonCommand).Assembly,
     ];
 
     private readonly string _rootPath;
@@ -52,9 +53,16 @@ public sealed class PowerShellRuntimeManager : IDisposable
         _ownsMcp = ownsMcp;
     }
 
+    public Task<PowerShellExecutionResult> ExecuteAsync(
+        PowerShellInvocationContext invocation,
+        string script,
+        CancellationToken cancellationToken = default) =>
+        ExecuteAsync(invocation, script, variables: null, cancellationToken);
+
     public async Task<PowerShellExecutionResult> ExecuteAsync(
         PowerShellInvocationContext invocation,
         string script,
+        IReadOnlyDictionary<string, object?>? variables,
         CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(invocation.Wraith);
@@ -66,7 +74,7 @@ public sealed class PowerShellRuntimeManager : IDisposable
             : await _mcp.GetEffectiveCatalogAsync(
                 wraith.Value, cancellationToken: cancellationToken).ConfigureAwait(false);
         var session = GetOrCreateSession(wraith, catalog);
-        return await session.ExecuteAsync(normalized, script, catalog, cancellationToken)
+        return await session.ExecuteAsync(normalized, script, catalog, variables, cancellationToken)
             .ConfigureAwait(false);
     }
 
@@ -191,6 +199,7 @@ public sealed class PowerShellRuntimeManager : IDisposable
             PowerShellInvocationContext invocation,
             string script,
             McpEffectiveCatalog? catalog,
+            IReadOnlyDictionary<string, object?>? variables,
             CancellationToken cancellationToken)
         {
             await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -213,6 +222,15 @@ public sealed class PowerShellRuntimeManager : IDisposable
                 var executionEpoch = _info.Epoch;
                 IReadOnlyList<PSObject> output;
                 IReadOnlyList<ErrorRecord> errors;
+                if (variables is not null)
+                {
+                    foreach (var variable in variables)
+                    {
+                        ArgumentException.ThrowIfNullOrWhiteSpace(variable.Key);
+                        _runspace.SessionStateProxy.SetVariable(variable.Key, variable.Value);
+                    }
+                }
+
                 using (var powershell = System.Management.Automation.PowerShell.Create())
                 {
                     powershell.Runspace = _runspace;
@@ -373,7 +391,7 @@ public sealed class PowerShellRuntimeManager : IDisposable
         {
             var initialState = InitialSessionState.CreateDefault2();
             initialState.LanguageMode = PSLanguageMode.FullLanguage;
-            initialState.ImportPSModule(DefaultModules);
+            AddDefaultModuleCmdlets(initialState);
             AddCmdlet<GetDwStateCommand>(initialState, "Get-DwState");
             AddCmdlet<SetDwStateCommand>(initialState, "Set-DwState");
             AddCmdlet<RemoveDwStateCommand>(initialState, "Remove-DwState");
@@ -464,6 +482,32 @@ public sealed class PowerShellRuntimeManager : IDisposable
         private static void AddCmdlet<T>(InitialSessionState state, string name)
             where T : Cmdlet =>
             state.Commands.Add(new SessionStateCmdletEntry(name, typeof(T), helpFileName: null));
+
+        private static void AddDefaultModuleCmdlets(InitialSessionState state)
+        {
+            var commandNames = state.Commands
+                .Select(command => command.Name)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            foreach (var assembly in DefaultModuleAssemblies.Distinct())
+            {
+                foreach (var type in assembly.GetExportedTypes().Where(type =>
+                    !type.IsAbstract && typeof(Cmdlet).IsAssignableFrom(type)))
+                {
+                    var attribute = type.GetCustomAttribute<CmdletAttribute>(inherit: false);
+                    if (attribute is null)
+                    {
+                        continue;
+                    }
+
+                    var name = $"{attribute.VerbName}-{attribute.NounName}";
+                    if (commandNames.Add(name))
+                    {
+                        state.Commands.Add(new SessionStateCmdletEntry(
+                            name, type, helpFileName: null));
+                    }
+                }
+            }
+        }
 
         private static string QuotePowerShell(string value) =>
             "'" + value.Replace("'", "''", StringComparison.Ordinal) + "'";

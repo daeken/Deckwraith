@@ -60,6 +60,9 @@ public sealed class PowerShellDeckbookEndToEndTests
             archive,
             checkpoints,
             clock);
+        await runspaces.ExecuteAsync(
+            new PowerShellInvocationContext("wraith1", null, "deckwraith"),
+            "function global:ConvertFrom-Json { throw 'cell input must not invoke ConvertFrom-Json' }");
         var markerPath = Path.Combine(temporaryDirectory.Path, "later-ran.txt");
 
         await notebooks.InsertAsync(

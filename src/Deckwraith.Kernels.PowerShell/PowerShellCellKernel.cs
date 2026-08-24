@@ -51,7 +51,11 @@ public sealed class PowerShellCellKernel : ICellKernel, IDisposable
         {
             result = await _runspaces.ExecuteAsync(
                 new PowerShellInvocationContext(request.Wraith, request.RunId, request.Haunt),
-                BuildScript(request),
+                request.Source,
+                new Dictionary<string, object?>(StringComparer.Ordinal)
+                {
+                    ["DwCellInput"] = PortablePowerShellValue.FromJsonElement(request.Input),
+                },
                 linkedCancellation.Token).ConfigureAwait(false);
             cancelled = linkedCancellation.IsCancellationRequested;
         }
@@ -140,16 +144,4 @@ public sealed class PowerShellCellKernel : ICellKernel, IDisposable
 
         _executions.Clear();
     }
-
-    private static string BuildScript(CellExecutionRequest request)
-    {
-        var input = request.Input.GetRawText();
-        return $$"""
-            $global:DwCellInput = ConvertFrom-Json -InputObject {{QuotePowerShell(input)}} -AsHashtable
-            {{request.Source}}
-            """;
-    }
-
-    private static string QuotePowerShell(string value) =>
-        "'" + value.Replace("'", "''", StringComparison.Ordinal) + "'";
 }
