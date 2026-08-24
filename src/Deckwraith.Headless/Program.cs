@@ -1,7 +1,10 @@
 ﻿using System.Text.Json;
+using System.Text.Json.Serialization;
 using Deckwraith.Application.Inference;
+using Deckwraith.Application.Hosting;
 using Deckwraith.Application.State;
 using Deckwraith.Continuity;
+using Deckwraith.Hosting;
 using Deckwraith.Kernels.Abstractions;
 using Deckwraith.Kernels.CSharp;
 using Deckwraith.Kernels.PowerShell;
@@ -34,6 +37,7 @@ internal static class DeckwraithCli
     private static readonly JsonSerializerOptions OutputOptions = new(JsonSerializerDefaults.Web)
     {
         WriteIndented = true,
+        Converters = { new JsonStringEnumConverter(JsonNamingPolicy.CamelCase) },
     };
 
     public static async Task<int> RunAsync(
@@ -134,6 +138,9 @@ internal static class DeckwraithCli
                         .ConfigureAwait(false),
                 "reverse" when arguments.Length == 3 =>
                     await ReverseAsync(rootPath, arguments[2], cancellationToken)
+                        .ConfigureAwait(false),
+                "bridge" when arguments.Length == 3 =>
+                    await ExecuteBridgeRequestAsync(rootPath, arguments[2], cancellationToken)
                         .ConfigureAwait(false),
                 _ => throw new ArgumentException($"Unknown command or invalid arguments: '{command}'."),
             };
@@ -529,6 +536,18 @@ internal static class DeckwraithCli
             new GitCheckpointStore(rootPath))
         .ReverseCommitAsync(commit, cancellationToken);
 
+    private static async Task<HostResponse> ExecuteBridgeRequestAsync(
+        string rootPath,
+        string requestPath,
+        CancellationToken cancellationToken)
+    {
+        var request = await ReadJsonAsync<HostRequest>(
+            requestPath, cancellationToken).ConfigureAwait(false);
+        using var host = await DeckwraithHost.OpenAsync(
+            rootPath, cancellationToken: cancellationToken).ConfigureAwait(false);
+        return await host.ExecuteAsync(request, cancellationToken).ConfigureAwait(false);
+    }
+
     private static async Task<T> ReadJsonAsync<T>(
         string path,
         CancellationToken cancellationToken)
@@ -588,7 +607,7 @@ internal static class DeckwraithCli
             "replace-shell|complete-run|cancel-run|" +
             "powershell|deckbook|add-cell|run-cell|run-remaining|deckbook-context|" +
             "mcp-servers|mcp-assign-global|mcp-assign-wraith|mcp-catalog|" +
-            "compact|recover|reverse> " +
+            "compact|recover|reverse|bridge> " +
             "<deck-path> [arguments]\n" +
             "  start-run <deck> <wraith> <haunt|-> [provider] <model> <objective>\n" +
             "  turn <deck> <wraith> <run-id> <message>\n" +
@@ -609,7 +628,8 @@ internal static class DeckwraithCli
             "  mcp-catalog <deck> <wraith>\n" +
             "  compact <deck> <wraith> <provider> <model> [fraction] [minimum-records]\n" +
             "  recover <deck> <wraith>\n" +
-            "  reverse <deck> <commit>");
+            "  reverse <deck> <commit>\n" +
+            "  bridge <deck> <host-request-json>");
     }
 
     private sealed class NotebookComposition : IDisposable

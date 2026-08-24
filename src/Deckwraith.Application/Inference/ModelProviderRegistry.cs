@@ -4,6 +4,8 @@ namespace Deckwraith.Application.Inference;
 
 public interface IModelProviderRegistry
 {
+    IReadOnlyList<IModelProvider> Providers { get; }
+
     IModelProvider GetProvider(string providerId);
 }
 
@@ -28,4 +30,7 @@ public sealed class ModelProviderRegistry : IModelProviderRegistry
         _providers.TryGetValue(providerId, out var provider)
             ? provider
             : throw new KeyNotFoundException($"Model provider '{providerId}' is not registered.");
+
+    public IReadOnlyList<IModelProvider> Providers =>
+        _providers.Values.OrderBy(provider => provider.ProviderId, StringComparer.Ordinal).ToArray();
 }

@@ -1,15 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
-
-  <PropertyGroup>
-    <OutputType>Exe</OutputType>
-  </PropertyGroup>
-  <ItemGroup>
-    <PackageReference Include="Microsoft.PowerShell.SDK" />
-  </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="../Deckwraith.Application/Deckwraith.Application.csproj" />
     <ProjectReference Include="../Deckwraith.Continuity/Deckwraith.Continuity.csproj" />
-    <ProjectReference Include="../Deckwraith.Hosting/Deckwraith.Hosting.csproj" />
     <ProjectReference Include="../Deckwraith.Kernels.CSharp/Deckwraith.Kernels.CSharp.csproj" />
     <ProjectReference Include="../Deckwraith.Kernels.PowerShell/Deckwraith.Kernels.PowerShell.csproj" />
     <ProjectReference Include="../Deckwraith.Mcp/Deckwraith.Mcp.csproj" />

@@ -22,6 +22,14 @@ public sealed record InsertDeckbookCell(
     string? Before = null,
     string? After = null);
 
+public interface IDeckbookEventSink
+{
+    ValueTask OnKernelEventAsync(
+        CellExecutionRequest request,
+        CellKernelEvent kernelEvent,
+        CancellationToken cancellationToken);
+}
+
 public sealed class DeckbookRuntime : IDisposable
 {
     private const long PositionStep = 1_024;
@@ -32,6 +40,7 @@ public sealed class DeckbookRuntime : IDisposable
     private readonly IAgentArchive _archive;
     private readonly ICheckpointStore _checkpoints;
     private readonly IDeckClock _clock;
+    private readonly IDeckbookEventSink? _events;
     private readonly ConcurrentDictionary<string, SemaphoreSlim> _gates =
         new(StringComparer.Ordinal);
 
@@ -41,7 +50,8 @@ public sealed class DeckbookRuntime : IDisposable
         ICellKernelRegistry kernels,
         IAgentArchive archive,
         ICheckpointStore checkpoints,
-        IDeckClock? clock = null)
+        IDeckClock? clock = null,
+        IDeckbookEventSink? events = null)
     {
         _deckState = deckState;
         _store = new DeckbookFileStore(rootPath);
@@ -49,6 +59,7 @@ public sealed class DeckbookRuntime : IDisposable
         _archive = archive;
         _checkpoints = checkpoints;
         _clock = clock ?? SystemDeckClock.Instance;
+        _events = events;
     }
 
     public async Task<DeckbookSnapshot> GetAsync(
@@ -642,6 +653,12 @@ public sealed class DeckbookRuntime : IDisposable
                 "before executing the cell.");
         }
 
+        if (_events is not null)
+        {
+            await _events.OnKernelEventAsync(
+                request, started, cancellationToken).ConfigureAwait(false);
+        }
+
         var startedAt = _clock.UtcNow;
         await AppendAsync(address, "deckbook.cell-execution-started", new
         {
@@ -676,6 +693,12 @@ public sealed class DeckbookRuntime : IDisposable
                 }
 
                 var kernelEvent = kernelEvents.Current;
+                if (_events is not null)
+                {
+                    await _events.OnKernelEventAsync(
+                        request, kernelEvent, cancellationToken).ConfigureAwait(false);
+                }
+
                 switch (kernelEvent)
                 {
                     case CellKernelStarted:

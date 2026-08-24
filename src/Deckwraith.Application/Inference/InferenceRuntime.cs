@@ -33,6 +33,16 @@ public sealed record TurnResult(
     ModelUsageReported? Usage,
     string CommitId);
 
+public interface IInferenceEventSink
+{
+    ValueTask OnModelEventAsync(
+        string wraith,
+        string runId,
+        string shellId,
+        ModelEvent modelEvent,
+        CancellationToken cancellationToken);
+}
+
 public sealed class InferenceRuntime : IDisposable
 {
     private const int MaximumToolLoops = 16;
@@ -43,6 +53,7 @@ public sealed class InferenceRuntime : IDisposable
     private readonly ICheckpointStore _checkpoints;
     private readonly IModelProviderRegistry _providers;
     private readonly IToolBroker _tools;
+    private readonly IInferenceEventSink? _events;
     private readonly IDeckClock _clock;
     private readonly int _defaultToolElisionTurns;
     private readonly ConcurrentDictionary<string, SemaphoreSlim> _agentGates = new(StringComparer.Ordinal);
@@ -55,7 +66,8 @@ public sealed class InferenceRuntime : IDisposable
         IModelProviderRegistry providers,
         IToolBroker? tools = null,
         IDeckClock? clock = null,
-        int defaultToolElisionTurns = 8)
+        int defaultToolElisionTurns = 8,
+        IInferenceEventSink? events = null)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(defaultToolElisionTurns);
         _deckState = deckState;
@@ -64,6 +76,7 @@ public sealed class InferenceRuntime : IDisposable
         _checkpoints = checkpoints;
         _providers = providers;
         _tools = tools ?? EmptyToolBroker.Instance;
+        _events = events;
         _clock = clock ?? SystemDeckClock.Instance;
         _defaultToolElisionTurns = defaultToolElisionTurns;
     }
@@ -519,6 +532,16 @@ public sealed class InferenceRuntime : IDisposable
                 await foreach (var modelEvent in provider.RunAsync(request, cancellationToken)
                     .WithCancellation(cancellationToken).ConfigureAwait(false))
                 {
+                    if (_events is not null)
+                    {
+                        await _events.OnModelEventAsync(
+                            agent.Value,
+                            run.RunId,
+                            shell.ShellId,
+                            modelEvent,
+                            cancellationToken).ConfigureAwait(false);
+                    }
+
                     switch (modelEvent)
                     {
                         case ModelTextDelta delta:

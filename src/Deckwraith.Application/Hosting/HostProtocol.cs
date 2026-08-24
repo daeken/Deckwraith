@@ -1,5 +1,6 @@
 using System.Runtime.CompilerServices;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Threading.Channels;
 
 namespace Deckwraith.Application.Hosting;
@@ -53,7 +54,7 @@ public sealed record HostResponse(
             HostProtocol.CurrentVersion,
             request.RequestId,
             true,
-            result is null ? null : JsonSerializer.SerializeToElement(result),
+            result is null ? null : JsonSerializer.SerializeToElement(result, HostProtocolJson.Options),
             null,
             eventCursor);
 
@@ -149,7 +150,7 @@ public sealed class HostEventBuffer : IDisposable
                 checked(++_nextCursor),
                 name,
                 timestamp,
-                JsonSerializer.SerializeToElement(payload));
+                JsonSerializer.SerializeToElement(payload, HostProtocolJson.Options));
             _events.Enqueue(hostEvent);
             while (_events.Count > _capacity)
             {
@@ -228,5 +229,17 @@ public sealed class HostEventBuffer : IDisposable
             _subscribers.Clear();
             _events.Clear();
         }
+    }
+}
+
+internal static class HostProtocolJson
+{
+    public static JsonSerializerOptions Options { get; } = CreateOptions();
+
+    private static JsonSerializerOptions CreateOptions()
+    {
+        var options = new JsonSerializerOptions(JsonSerializerDefaults.Web);
+        options.Converters.Add(new JsonStringEnumConverter(JsonNamingPolicy.CamelCase));
+        return options;
     }
 }

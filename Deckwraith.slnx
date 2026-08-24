@@ -4,6 +4,7 @@
     <Project Path="src/Deckwraith.Continuity/Deckwraith.Continuity.csproj" />
     <Project Path="src/Deckwraith.Core/Deckwraith.Core.csproj" />
     <Project Path="src/Deckwraith.Headless/Deckwraith.Headless.csproj" />
+    <Project Path="src/Deckwraith.Hosting/Deckwraith.Hosting.csproj" />
     <Project Path="src/Deckwraith.Kernels.Abstractions/Deckwraith.Kernels.Abstractions.csproj" />
     <Project Path="src/Deckwraith.Kernels.CSharp/Deckwraith.Kernels.CSharp.csproj" />
     <Project Path="src/Deckwraith.Kernels.PowerShell/Deckwraith.Kernels.PowerShell.csproj" />
@@ -22,6 +23,7 @@
     <Project Path="tests/Deckwraith.Continuity.Tests/Deckwraith.Continuity.Tests.csproj" />
     <Project Path="tests/Deckwraith.Core.Tests/Deckwraith.Core.Tests.csproj" />
     <Project Path="tests/Deckwraith.IntegrationTests/Deckwraith.IntegrationTests.csproj" />
+    <Project Path="tests/Deckwraith.Hosting.Tests/Deckwraith.Hosting.Tests.csproj" />
     <Project Path="tests/Deckwraith.Kernels.ContractTests/Deckwraith.Kernels.ContractTests.csproj" />
     <Project Path="tests/Deckwraith.Mcp.TestServer/Deckwraith.Mcp.TestServer.csproj" />
     <Project Path="tests/Deckwraith.Mcp.Tests/Deckwraith.Mcp.Tests.csproj" />
