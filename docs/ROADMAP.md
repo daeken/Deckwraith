@@ -81,7 +81,7 @@ Acceptance: a mixed PowerShell/C# deckbook exchanges a canonical value and artif
 is interrupted, and cold replacement loses an ordinary C# variable without replaying its producer
 or erasing the previous output.
 
-## 6. MCP and model-visible tools — next
+## 6. MCP and model-visible tools — implemented
 
 Turn the existing execution surfaces into a discoverable inside-facing tool universe.
 
@@ -94,6 +94,13 @@ Turn the existing execution surfaces into a discoverable inside-facing tool univ
 Acceptance: a fake MCP server contributes a side-effecting structured command that is absent from
 the initial prompt, discoverable through `Get-Command` and `Get-Help`, usable in an object pipeline,
 and invoked by an explicit model tool call with complete durable lifecycle records.
+
+The host now owns JSON-RPC stdio MCP processes, host-environment credential references, durable
+global/per-wraith assignments and exclusions, deterministic effective catalogs, original schemas,
+and stable PowerShell module/function generation. Catalog changes cold-swap the runspace between
+invocations. Models receive only `Invoke-PowerShell`; the acceptance model discovers a generated
+command through help, explicitly invokes its side effect, preserves nested structure through a
+pipeline, and produces paired outer tool and inner MCP archive lifecycles.
 
 ## 7. Continuity and recovery
 

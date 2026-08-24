@@ -106,6 +106,19 @@ internal static class DeckwraithCli
                 "deckbook-context" when arguments.Length == 5 =>
                     await CompileDeckbookContextAsync(rootPath, arguments, cancellationToken)
                         .ConfigureAwait(false),
+                "mcp-servers" when arguments.Length == 3 =>
+                    await ConfigureMcpServersAsync(rootPath, arguments[2], cancellationToken)
+                        .ConfigureAwait(false),
+                "mcp-assign-global" when arguments.Length == 3 =>
+                    await AssignGlobalMcpAsync(rootPath, arguments[2], cancellationToken)
+                        .ConfigureAwait(false),
+                "mcp-assign-wraith" when arguments.Length == 4 =>
+                    await AssignWraithMcpAsync(
+                        rootPath, arguments[2], arguments[3], cancellationToken)
+                        .ConfigureAwait(false),
+                "mcp-catalog" when arguments.Length == 3 =>
+                    await ReadMcpCatalogAsync(rootPath, arguments[2], cancellationToken)
+                        .ConfigureAwait(false),
                 _ => throw new ArgumentException($"Unknown command or invalid arguments: '{command}'."),
             };
 
@@ -364,6 +377,79 @@ internal static class DeckwraithCli
             cancellationToken: cancellationToken).ConfigureAwait(false);
     }
 
+    private static async Task<object> ConfigureMcpServersAsync(
+        string rootPath,
+        string registryPath,
+        CancellationToken cancellationToken)
+    {
+        var registry = await ReadJsonAsync<McpServerRegistry>(
+            registryPath, cancellationToken).ConfigureAwait(false);
+        using var runtime = CreateMcpRuntime(rootPath);
+        var commitId = await runtime.ConfigureServersAsync(
+            registry.Servers, cancellationToken).ConfigureAwait(false);
+        return new { registry, commitId };
+    }
+
+    private static async Task<object> AssignGlobalMcpAsync(
+        string rootPath,
+        string assignmentPath,
+        CancellationToken cancellationToken)
+    {
+        var assignment = await ReadJsonAsync<McpAssignmentDocument>(
+            assignmentPath, cancellationToken).ConfigureAwait(false);
+        using var runtime = CreateMcpRuntime(rootPath);
+        var commitId = await runtime.WriteGlobalAssignmentAsync(
+            assignment, cancellationToken).ConfigureAwait(false);
+        return new { assignment, commitId };
+    }
+
+    private static async Task<object> AssignWraithMcpAsync(
+        string rootPath,
+        string wraith,
+        string assignmentPath,
+        CancellationToken cancellationToken)
+    {
+        var assignment = await ReadJsonAsync<McpAssignmentDocument>(
+            assignmentPath, cancellationToken).ConfigureAwait(false);
+        using var runtime = CreateMcpRuntime(rootPath);
+        var commitId = await runtime.WriteWraithAssignmentAsync(
+            wraith, assignment, cancellationToken).ConfigureAwait(false);
+        return new { wraith, assignment, commitId };
+    }
+
+    private static async Task<object> ReadMcpCatalogAsync(
+        string rootPath,
+        string wraith,
+        CancellationToken cancellationToken)
+    {
+        using var runtime = CreateMcpRuntime(rootPath);
+        return await runtime.GetEffectiveCatalogAsync(
+            wraith, cancellationToken: cancellationToken).ConfigureAwait(false);
+    }
+
+    private static McpCatalogRuntime CreateMcpRuntime(string rootPath) =>
+        new(
+            rootPath,
+            new JsonDeckStateStore(rootPath),
+            new JsonlAgentArchive(rootPath),
+            new GitCheckpointStore(rootPath));
+
+    private static async Task<T> ReadJsonAsync<T>(
+        string path,
+        CancellationToken cancellationToken)
+    {
+        await using var stream = new FileStream(
+            Path.GetFullPath(path),
+            FileMode.Open,
+            FileAccess.Read,
+            FileShare.Read,
+            64 * 1024,
+            FileOptions.Asynchronous | FileOptions.SequentialScan);
+        return await JsonSerializer.DeserializeAsync<T>(
+            stream, OutputOptions, cancellationToken).ConfigureAwait(false) ??
+            throw new JsonException($"'{path}' contains no JSON value.");
+    }
+
     private static string? ParseOptionalHaunt(string value) => value == "-" ? null : value;
 
     private static string ResolveCodexExecutable()
@@ -384,7 +470,8 @@ internal static class DeckwraithCli
             "Usage: deckwraith <init|create-wraith|create-haunt|rename-wraith|rename-haunt|" +
             "resolve-wraith|resolve-haunt|identity|archive|store-artifact|start-run|turn|run-openai|" +
             "replace-shell|complete-run|cancel-run|" +
-            "powershell|deckbook|add-cell|run-cell|run-remaining|deckbook-context> " +
+            "powershell|deckbook|add-cell|run-cell|run-remaining|deckbook-context|" +
+            "mcp-servers|mcp-assign-global|mcp-assign-wraith|mcp-catalog> " +
             "<deck-path> [arguments]\n" +
             "  start-run <deck> <wraith> <haunt|-> <model> <objective>\n" +
             "  turn <deck> <wraith> <run-id> <message>\n" +
@@ -397,7 +484,11 @@ internal static class DeckwraithCli
             "  add-cell <deck> <wraith> <haunt> <name> <kind> <kernel|-> <source>\n" +
             "  run-cell <deck> <wraith> <haunt> <name> [run|-]\n" +
             "  run-remaining <deck> <wraith> <haunt> <from> [run|-]\n" +
-            "  deckbook-context <deck> <wraith> <haunt> <active|->");
+            "  deckbook-context <deck> <wraith> <haunt> <active|->\n" +
+            "  mcp-servers <deck> <registry-json>\n" +
+            "  mcp-assign-global <deck> <assignment-json>\n" +
+            "  mcp-assign-wraith <deck> <wraith> <assignment-json>\n" +
+            "  mcp-catalog <deck> <wraith>");
     }
 
     private sealed class NotebookComposition : IDisposable
