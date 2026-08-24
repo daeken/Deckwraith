@@ -63,6 +63,93 @@ public sealed class GitProjectCommitterTests
     }
 
     [Fact]
+    public async Task CreatesTheInitialCommitInAnUnbornRepository()
+    {
+        using var temporaryDirectory = new TemporaryDirectory();
+        await InitializeProjectAsync(temporaryDirectory.Path);
+        var batch = new AtomicFileEditBatch(
+            [new("first.txt", FileEditKind.Write, Text: "first\n")],
+            temporaryDirectory.Path,
+            "Begin the project");
+        var committer = new GitProjectCommitter();
+        var preparation = await committer.PrepareAsync(
+            Policy(temporaryDirectory.Path, allowDirty: false),
+            CanonicalName.Parse("lumen"),
+            CanonicalName.Parse("compiler-lab"),
+            batch.CommitSubject!,
+            batch.CommitBody,
+            AtomicFileEditor.ResolvePaths(batch),
+            CancellationToken.None);
+
+        var edit = await AtomicFileEditor.ApplyAsync(
+            batch,
+            (files, cancellationToken) => committer.CommitAsync(
+                preparation, files, cancellationToken));
+
+        var commit = Assert.IsType<ProjectCommitReceipt>(edit.Commit);
+        Assert.Equal(commit.CommitId, await GitAsync(
+            temporaryDirectory.Path, ["rev-parse", "HEAD"]));
+        Assert.Equal("1", await GitAsync(
+            temporaryDirectory.Path, ["rev-list", "--count", "HEAD"]));
+        Assert.Equal("first", await GitAsync(
+            temporaryDirectory.Path, ["show", "HEAD:first.txt"]));
+        Assert.Equal(string.Empty, await GitAsync(
+            temporaryDirectory.Path, ["status", "--porcelain=v1"]));
+    }
+
+    [Fact]
+    public async Task RefPublicationFailureLeavesTheBranchAndEditBatchUntouched()
+    {
+        using var temporaryDirectory = new TemporaryDirectory();
+        await InitializeProjectAsync(temporaryDirectory.Path);
+        var editedPath = Path.Combine(temporaryDirectory.Path, "edited.txt");
+        await File.WriteAllTextAsync(editedPath, "original\n");
+        await GitAsync(temporaryDirectory.Path, ["add", "--all"]);
+        await GitAsync(temporaryDirectory.Path, ["commit", "-m", "baseline"]);
+        var headBefore = await GitAsync(temporaryDirectory.Path, ["rev-parse", "HEAD"]);
+        var batch = new AtomicFileEditBatch(
+            [new("edited.txt", FileEditKind.Append, Text: "wraith edit\n")],
+            temporaryDirectory.Path,
+            "This ref update will fail");
+        var committer = new GitProjectCommitter();
+        var preparation = await committer.PrepareAsync(
+            Policy(temporaryDirectory.Path, allowDirty: false),
+            CanonicalName.Parse("lumen"),
+            CanonicalName.Parse("compiler-lab"),
+            batch.CommitSubject!,
+            batch.CommitBody,
+            AtomicFileEditor.ResolvePaths(batch),
+            CancellationToken.None);
+        var gitDirectory = await GitAsync(
+            temporaryDirectory.Path, ["rev-parse", "--absolute-git-dir"]);
+        var refLock = Path.Combine(gitDirectory, "refs", "heads", "main.lock");
+        await File.WriteAllTextAsync(refLock, "deliberate lock contention");
+
+        try
+        {
+            var error = await Assert.ThrowsAsync<AtomicFileEditException>(() =>
+                AtomicFileEditor.ApplyAsync(
+                    batch,
+                    (files, cancellationToken) => committer.CommitAsync(
+                        preparation, files, cancellationToken)));
+            Assert.Contains("all published files were restored", error.Message, StringComparison.Ordinal);
+            Assert.IsType<ProjectCommitException>(error.InnerException);
+        }
+        finally
+        {
+            File.Delete(refLock);
+        }
+
+        Assert.Equal("original\n", await File.ReadAllTextAsync(editedPath));
+        Assert.Equal(headBefore, await GitAsync(
+            temporaryDirectory.Path, ["rev-parse", "HEAD"]));
+        Assert.Equal(string.Empty, await GitAsync(
+            temporaryDirectory.Path, ["status", "--porcelain=v1"]));
+        Assert.Empty(Directory.EnumerateFiles(
+            temporaryDirectory.Path, ".deckwraith-edit-*", SearchOption.AllDirectories));
+    }
+
+    [Fact]
     public async Task PreflightRejectsDirtyTreesAndPathsOutsideTheAllowedScope()
     {
         using var temporaryDirectory = new TemporaryDirectory();

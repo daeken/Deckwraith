@@ -49,7 +49,8 @@ public sealed record AtomicFileEditResult(
     IReadOnlyList<FileEditReceipt> Files,
     string? CommitSubject,
     string? CommitBody,
-    ProjectCommitReceipt? Commit = null);
+    ProjectCommitReceipt? Commit = null,
+    string? Warning = null);
 
 public sealed class AtomicFileEditException : Exception
 {
@@ -80,6 +81,14 @@ public sealed class AtomicFileEditor
         AtomicFileEditBatch batch,
         CancellationToken cancellationToken = default)
     {
+        return await ApplyAsync(batch, commitAsync: null, cancellationToken).ConfigureAwait(false);
+    }
+
+    public static async Task<AtomicFileEditResult> ApplyAsync(
+        AtomicFileEditBatch batch,
+        Func<IReadOnlyList<FileEditReceipt>, CancellationToken, Task<ProjectCommitReceipt?>>? commitAsync,
+        CancellationToken cancellationToken = default)
+    {
         ArgumentNullException.ThrowIfNull(batch);
         if (batch.Operations.Count == 0)
         {
@@ -88,28 +97,43 @@ public sealed class AtomicFileEditor
 
         var candidates = BuildCandidates(batch, cancellationToken);
         await PublicationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        var published = false;
         try
         {
             await PrepareTemporaryFilesAsync(candidates, cancellationToken).ConfigureAwait(false);
             Publish(candidates);
+            published = true;
+
+            var result = new AtomicFileEditResult(
+                candidates.Select(candidate => new FileEditReceipt(
+                    candidate.Path,
+                    !candidate.OriginalExists,
+                    candidate.OriginalHash,
+                    candidate.FinalHash,
+                    candidate.OriginalBytes.LongLength,
+                    candidate.FinalBytes.LongLength,
+                    candidate.Operations.Select(operation => operation.Kind).ToArray())).ToArray(),
+                batch.CommitSubject,
+                batch.CommitBody);
+            if (commitAsync is not null)
+            {
+                var commit = await commitAsync(result.Files, cancellationToken).ConfigureAwait(false);
+                result = result with { Commit = commit };
+            }
+
+            published = false;
+            return result with { Warning = CompletePublication(candidates) };
+        }
+        catch (Exception exception) when (published)
+        {
+            RollBackPublished(candidates, exception);
+            throw;
         }
         finally
         {
             Cleanup(candidates);
             PublicationGate.Release();
         }
-
-        return new AtomicFileEditResult(
-            candidates.Select(candidate => new FileEditReceipt(
-                candidate.Path,
-                !candidate.OriginalExists,
-                candidate.OriginalHash,
-                candidate.FinalHash,
-                candidate.OriginalBytes.LongLength,
-                candidate.FinalBytes.LongLength,
-                candidate.Operations.Select(operation => operation.Kind).ToArray())).ToArray(),
-            batch.CommitSubject,
-            batch.CommitBody);
     }
 
     public static IReadOnlyList<string> ResolvePaths(AtomicFileEditBatch batch)
@@ -636,11 +660,6 @@ public sealed class AtomicFileEditor
                 }
             }
 
-            foreach (var candidate in published.Where(candidate => candidate.OriginalExists))
-            {
-                File.Delete(candidate.BackupPath!);
-                candidate.BackupPath = null;
-            }
         }
         catch (Exception exception)
         {
@@ -672,6 +691,79 @@ public sealed class AtomicFileEditor
             throw new AtomicFileEditException(
                 "Atomic file edit publication failed; all published files were restored.", exception);
         }
+    }
+
+    private static string? CompletePublication(IEnumerable<FileCandidate> candidates)
+    {
+        var retainedBackups = new List<string>();
+        foreach (var candidate in candidates.Where(candidate => candidate.OriginalExists))
+        {
+            try
+            {
+                File.Delete(candidate.BackupPath!);
+                candidate.BackupPath = null;
+            }
+            catch (IOException)
+            {
+                retainedBackups.Add(candidate.BackupPath!);
+            }
+            catch (UnauthorizedAccessException)
+            {
+                retainedBackups.Add(candidate.BackupPath!);
+            }
+        }
+
+        return retainedBackups.Count == 0
+            ? null
+            : "The edit succeeded, but Deckwraith could not remove recovery backup(s): " +
+                string.Join(", ", retainedBackups);
+    }
+
+    private static void RollBackPublished(
+        IReadOnlyList<FileCandidate> candidates,
+        Exception cause)
+    {
+        var rollbackErrors = new List<Exception>();
+        foreach (var candidate in candidates.Reverse())
+        {
+            try
+            {
+                if (!File.Exists(candidate.Path) ||
+                    !StringComparer.Ordinal.Equals(
+                        Hash(File.ReadAllBytes(candidate.Path)), candidate.FinalHash))
+                {
+                    throw new AtomicFileEditException(
+                        $"'{candidate.Path}' changed after publication; its recovery backup was retained.");
+                }
+
+                if (candidate.OriginalExists && !File.Exists(candidate.BackupPath))
+                {
+                    throw new AtomicFileEditException(
+                        $"The recovery backup for '{candidate.Path}' is missing.");
+                }
+
+                File.Delete(candidate.Path);
+                if (candidate.OriginalExists)
+                {
+                    File.Move(candidate.BackupPath!, candidate.Path);
+                    candidate.BackupPath = null;
+                }
+            }
+            catch (Exception rollbackException)
+            {
+                rollbackErrors.Add(rollbackException);
+            }
+        }
+
+        if (rollbackErrors.Count > 0)
+        {
+            throw new AggregateException(
+                "Atomic file edit follow-up failed and rollback was incomplete; recovery backups were retained.",
+                [cause, .. rollbackErrors]);
+        }
+
+        throw new AtomicFileEditException(
+            "Atomic file edit follow-up failed; all published files were restored.", cause);
     }
 
     private static void VerifyUnchanged(FileCandidate candidate)

@@ -196,6 +196,11 @@ public sealed class GitProjectCommitter : IProjectCommitter
         };
         try
         {
+            var branch = (await RunGitAsync(
+                preparation.RepositoryPath,
+                ["symbolic-ref", "--quiet", "HEAD"],
+                cancellationToken,
+                environment).ConfigureAwait(false)).Output.Trim();
             var head = await RunGitAsync(
                 preparation.RepositoryPath,
                 ["rev-parse", "--verify", "HEAD"],
@@ -204,7 +209,9 @@ public sealed class GitProjectCommitter : IProjectCommitter
                 allowedExitCodes: [0, 128]).ConfigureAwait(false);
             await RunGitAsync(
                 preparation.RepositoryPath,
-                head.ExitCode == 0 ? ["read-tree", "HEAD"] : ["read-tree", "--empty"],
+                head.ExitCode == 0
+                    ? ["read-tree", head.Output.Trim()]
+                    : ["read-tree", "--empty"],
                 cancellationToken,
                 environment).ConfigureAwait(false);
             await RunGitAsync(
@@ -218,15 +225,48 @@ public sealed class GitProjectCommitter : IProjectCommitter
                 preparation.RepositoryPath,
                 environment,
                 cancellationToken).ConfigureAwait(false);
-            var changed = await RunGitAsync(
+            var treeId = (await RunGitAsync(
                 preparation.RepositoryPath,
-                ["diff", "--cached", "--quiet", "--exit-code"],
+                ["write-tree"],
                 cancellationToken,
-                environment,
-                allowedExitCodes: [0, 1]).ConfigureAwait(false);
-            if (changed.ExitCode == 0)
+                environment).ConfigureAwait(false)).Output.Trim();
+            var parentTreeId = head.ExitCode == 0
+                ? (await RunGitAsync(
+                    preparation.RepositoryPath,
+                    ["rev-parse", head.Output.Trim() + "^{tree}"],
+                    cancellationToken,
+                    environment).ConfigureAwait(false)).Output.Trim()
+                : null;
+            if (StringComparer.Ordinal.Equals(treeId, parentTreeId))
             {
                 return null;
+            }
+
+            var changedPathArguments = new List<string>
+            {
+                "diff",
+                "--cached",
+                "--name-only",
+                "-z",
+            };
+            if (head.ExitCode == 0)
+            {
+                changedPathArguments.Add(head.Output.Trim());
+            }
+
+            changedPathArguments.Add("--");
+            changedPathArguments.AddRange(relativePaths);
+            var committedPaths = (await RunGitAsync(
+                preparation.RepositoryPath,
+                changedPathArguments,
+                cancellationToken,
+                environment).ConfigureAwait(false)).Output
+                .Split('\0', StringSplitOptions.RemoveEmptyEntries);
+            if (committedPaths.Length == 0 ||
+                committedPaths.Any(path => !relativePaths.Contains(path, StringComparer.Ordinal)))
+            {
+                throw new ProjectCommitException(
+                    "The proposed project commit does not match its edit receipt.");
             }
 
             var trailers = new StringBuilder()
@@ -236,13 +276,17 @@ public sealed class GitProjectCommitter : IProjectCommitter
                 .ToString();
             var arguments = new List<string>
             {
-                "-c",
-                "core.hooksPath=" + temporaryHooks,
-                "commit",
-                "--no-gpg-sign",
-                "-m",
-                preparation.Subject,
+                "commit-tree",
+                treeId,
             };
+            if (head.ExitCode == 0)
+            {
+                arguments.Add("-p");
+                arguments.Add(head.Output.Trim());
+            }
+
+            arguments.Add("-m");
+            arguments.Add(preparation.Subject);
             if (preparation.Body is not null)
             {
                 arguments.Add("-m");
@@ -251,25 +295,25 @@ public sealed class GitProjectCommitter : IProjectCommitter
 
             arguments.Add("-m");
             arguments.Add(trailers);
-            await RunGitAsync(
+            var commitId = (await RunGitAsync(
                 preparation.RepositoryPath,
                 arguments,
                 cancellationToken,
-                environment).ConfigureAwait(false);
-            var commitId = (await RunGitAsync(
+                environment).ConfigureAwait(false)).Output.Trim();
+
+            await RunGitAsync(
                 preparation.RepositoryPath,
-                ["rev-parse", "HEAD"],
-                cancellationToken).ConfigureAwait(false)).Output.Trim();
-            var committedPaths = (await RunGitAsync(
-                preparation.RepositoryPath,
-                ["diff-tree", "--root", "--no-commit-id", "--name-only", "-r", "-z", commitId],
-                cancellationToken).ConfigureAwait(false)).Output
-                .Split('\0', StringSplitOptions.RemoveEmptyEntries);
-            if (committedPaths.Any(path => !relativePaths.Contains(path, StringComparer.Ordinal)))
-            {
-                throw new ProjectCommitException(
-                    $"Project commit '{commitId}' contains a path outside its edit receipt.");
-            }
+                [
+                    "-c",
+                    "core.hooksPath=" + temporaryHooks,
+                    "update-ref",
+                    "-m",
+                    "Deckwraith auto-commit: " + preparation.Subject,
+                    branch,
+                    commitId,
+                    head.ExitCode == 0 ? head.Output.Trim() : string.Empty,
+                ],
+                cancellationToken).ConfigureAwait(false);
 
             string? warning = null;
             try
@@ -277,13 +321,13 @@ public sealed class GitProjectCommitter : IProjectCommitter
                 await RunGitAsync(
                     preparation.RepositoryPath,
                     ["reset", "--quiet", "HEAD", "--", .. relativePaths],
-                    cancellationToken,
+                    CancellationToken.None,
                     new Dictionary<string, string>(StringComparer.Ordinal)
                     {
                         ["GIT_LITERAL_PATHSPECS"] = "1",
                     }).ConfigureAwait(false);
             }
-            catch (Exception exception) when (exception is not OperationCanceledException)
+            catch (Exception exception)
             {
                 warning =
                     "The commit succeeded, but Deckwraith could not align the existing index for its edited paths: " +

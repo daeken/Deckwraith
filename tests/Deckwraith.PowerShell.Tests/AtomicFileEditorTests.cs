@@ -5,6 +5,8 @@ using System.Text;
 using System.Text.Json;
 using Deckwraith.Application.Files;
 using Deckwraith.Application.State;
+using Deckwraith.Core.Naming;
+using Deckwraith.Core.State;
 using Deckwraith.Persistence.Archives;
 using Deckwraith.Persistence.Artifacts;
 using Deckwraith.Persistence.Git;
@@ -95,6 +97,64 @@ public sealed class AtomicFileEditorTests
         Assert.Equal("untouched\n", await File.ReadAllTextAsync(guardedPath));
         Assert.Equal("2", await GitAsync(
             projectDirectory.Path, ["rev-list", "--count", "HEAD"]));
+    }
+
+    [Fact]
+    public async Task HostedAutoCommitFailureRollsBackEveryPublishedFile()
+    {
+        using var deckDirectory = new TemporaryDirectory();
+        using var projectDirectory = new TemporaryDirectory();
+        var existingPath = Path.Combine(projectDirectory.Path, "existing.txt");
+        var createdPath = Path.Combine(projectDirectory.Path, "created.txt");
+        await File.WriteAllTextAsync(existingPath, "original\n");
+
+        var deckState = new JsonDeckStateStore(deckDirectory.Path);
+        var archive = new JsonlAgentArchive(deckDirectory.Path);
+        var checkpoints = new GitCheckpointStore(deckDirectory.Path);
+        var artifactStore = new ContentAddressedArtifactStore(deckDirectory.Path);
+        using (var state = new StateSpine(deckState, archive, artifactStore, checkpoints))
+        {
+            await state.InitializeAsync();
+            await state.CreateHauntAsync("work");
+            await state.CreateWraithAsync("lumen");
+            await state.ConfigureHauntProjectAsync(
+                "work",
+                projectDirectory.Path,
+                autoCommitEnabled: true,
+                cancellationToken: CancellationToken.None);
+        }
+
+        var durableState = new DurableStateRuntime(
+            deckState,
+            new JsonDurableValueStore(deckDirectory.Path),
+            archive,
+            checkpoints);
+        var artifacts = new ArtifactRuntime(deckState, artifactStore, archive, checkpoints);
+        var committer = new FailingProjectCommitter();
+        using var manager = new PowerShellRuntimeManager(
+            deckDirectory.Path,
+            durableState,
+            artifacts,
+            archive,
+            checkpoints,
+            deckState: deckState,
+            projectCommitter: committer);
+
+        var execution = await manager.ExecuteAsync(
+            new PowerShellInvocationContext("lumen", Haunt: "work"),
+            """
+            Invoke-DwFileEdit -Operation @(
+                @{ path = 'existing.txt'; kind = 'append'; text = 'published' },
+                @{ path = 'created.txt'; kind = 'write'; text = 'published' }
+            ) -CommitSubject 'This commit will fail'
+            """);
+
+        Assert.NotEmpty(execution.Errors);
+        Assert.Equal(1, committer.CommitCallCount);
+        Assert.Equal("original\n", await File.ReadAllTextAsync(existingPath));
+        Assert.False(File.Exists(createdPath));
+        Assert.Empty(Directory.EnumerateFiles(
+            projectDirectory.Path, ".deckwraith-edit-*", SearchOption.AllDirectories));
     }
 
     [Fact]
@@ -305,6 +365,40 @@ public sealed class AtomicFileEditorTests
             {
                 Directory.Delete(Path, recursive: true);
             }
+        }
+    }
+
+    private sealed class FailingProjectCommitter : IProjectCommitter
+    {
+        public int CommitCallCount { get; private set; }
+
+        public Task<ProjectCommitPreparation> PrepareAsync(
+            HauntProjectPolicy policy,
+            CanonicalName wraith,
+            CanonicalName haunt,
+            string subject,
+            string? body,
+            IReadOnlyList<string> targetPaths,
+            CancellationToken cancellationToken) => Task.FromResult(new ProjectCommitPreparation(
+                policy.ProjectPath,
+                policy.ProjectPath,
+                wraith,
+                haunt,
+                subject,
+                body,
+                wraith.Value,
+                $"{wraith.Value}@deckwraith.local",
+                targetPaths,
+                targetPaths.Select(path => Path.GetRelativePath(policy.ProjectPath, path)).ToArray()));
+
+        public Task<ProjectCommitReceipt?> CommitAsync(
+            ProjectCommitPreparation preparation,
+            IReadOnlyList<FileEditReceipt> files,
+            CancellationToken cancellationToken)
+        {
+            CommitCallCount++;
+            return Task.FromException<ProjectCommitReceipt?>(
+                new ProjectCommitException("Deliberate auto-commit failure."));
         }
     }
 }

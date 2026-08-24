@@ -80,15 +80,15 @@ public sealed class InvokeDwFileEditCommand : DwCmdlet
                     CancellationToken.None).GetAwaiter().GetResult();
             }
 
+            Func<IReadOnlyList<FileEditReceipt>, CancellationToken, Task<ProjectCommitReceipt?>>?
+                commitAsync = preparation is null
+                    ? null
+                    : (files, cancellationToken) => session.ProjectCommitter!.CommitAsync(
+                        preparation, files, cancellationToken);
             var result = AtomicFileEditor.ApplyAsync(
                 batch,
+                commitAsync,
                 CancellationToken.None).GetAwaiter().GetResult();
-            if (preparation is not null)
-            {
-                var commit = session.ProjectCommitter!.CommitAsync(
-                    preparation, result.Files, CancellationToken.None).GetAwaiter().GetResult();
-                result = result with { Commit = commit };
-            }
 
             WriteObject(result);
         }
