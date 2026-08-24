@@ -14,7 +14,7 @@ mkdir -p "$deckwraith_output"
 find "$deckwraith_source" -maxdepth 1 -type f \( \
   -name '*.AppImage' -o \
   -name '*.dmg' -o \
-  -name 'Deckwraith.Setup.*.exe' -o \
+  -name 'Deckwraith Setup *.exe' -o \
   -name '*.zip' -o \
   -name '*.tar.gz' -o \
   -name '*.blockmap' -o \
@@ -31,7 +31,7 @@ case "$deckwraith_target" in
     compgen -G "$deckwraith_output/*.tar.gz" >/dev/null
     ;;
   win)
-    compgen -G "$deckwraith_output/Deckwraith.Setup.*.exe" >/dev/null
+    compgen -G "$deckwraith_output/Deckwraith Setup *.exe" >/dev/null
     compgen -G "$deckwraith_output/*-win.zip" >/dev/null
     ;;
   *)

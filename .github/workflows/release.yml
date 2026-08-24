@@ -102,7 +102,7 @@ jobs:
           files: |
             artifacts/**/*.AppImage
             artifacts/**/*.dmg
-            artifacts/**/Deckwraith.Setup.*.exe
+            artifacts/**/Deckwraith Setup *.exe
             artifacts/**/*-mac.zip
             artifacts/**/*-win.zip
             artifacts/**/*.tar.gz
@@ -120,7 +120,7 @@ jobs:
           files: |
             artifacts/**/*.AppImage
             artifacts/**/*.dmg
-            artifacts/**/Deckwraith.Setup.*.exe
+            artifacts/**/Deckwraith Setup *.exe
             artifacts/**/*-mac.zip
             artifacts/**/*-win.zip
             artifacts/**/*.tar.gz
