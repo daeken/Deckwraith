@@ -76,6 +76,37 @@ public sealed class HostBridgeEndToEndTests
     }
 
     [Fact]
+    public async Task AConversationCanProbeOneProviderWithoutReadingEveryCredential()
+    {
+        var rootPath = Path.Combine(
+            Path.GetTempPath(), $"deckwraith-host-provider-probe-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(rootPath);
+        try
+        {
+            var credentials = new RecordingCredentialStore();
+            var options = DeckwraithHostOptions.CreateDefault() with
+            {
+                CredentialStore = credentials,
+            };
+            using var host = await DeckwraithHost.OpenAsync(rootPath, options);
+
+            var snapshot = await host.ReadProviderSnapshotAsync("openai-api");
+
+            Assert.Equal("openai-api", snapshot.ProviderId);
+            Assert.Equal(ProviderAuthenticationState.Missing, snapshot.Authentication?.State);
+            Assert.Equal(1, credentials.ReadCount);
+            Assert.Equal("provider.openai-api.api-key", credentials.LastReadCredentialId);
+            await Assert.ThrowsAsync<KeyNotFoundException>(async () =>
+                await host.ReadProviderSnapshotAsync("not-a-provider"));
+            Assert.Equal(1, credentials.ReadCount);
+        }
+        finally
+        {
+            Directory.Delete(rootPath, recursive: true);
+        }
+    }
+
+    [Fact]
     public async Task ConversationAttachmentsBecomeOpaqueDurableArtifacts()
     {
         var temporaryRoot = Path.Combine(
@@ -471,11 +502,14 @@ public sealed class HostBridgeEndToEndTests
 
         public int ReadCount { get; private set; }
 
+        public string? LastReadCredentialId { get; private set; }
+
         public ValueTask<string?> ReadAsync(
             string credentialId,
             CancellationToken cancellationToken = default)
         {
             ReadCount++;
+            LastReadCredentialId = credentialId;
             return ValueTask.FromResult(
                 _credentials.TryGetValue(credentialId, out var payload) ? payload : null);
         }

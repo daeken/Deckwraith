@@ -266,17 +266,28 @@ public sealed class DeckwraithHost : IDisposable
         var snapshots = new List<ProviderSnapshot>();
         foreach (var provider in _providers.Providers)
         {
-            var authentication = provider is IProviderAuthenticationSource authenticationSource
-                ? await authenticationSource.GetAuthenticationStatusAsync(cancellationToken)
-                    .ConfigureAwait(false)
-                : null;
-            snapshots.Add(new ProviderSnapshot(
+            snapshots.Add(await ReadProviderSnapshotAsync(
                 provider.ProviderId,
-                provider.Capabilities,
-                authentication));
+                cancellationToken).ConfigureAwait(false));
         }
 
         return snapshots;
+    }
+
+    public async ValueTask<ProviderSnapshot> ReadProviderSnapshotAsync(
+        string providerId,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(providerId);
+        var provider = _providers.GetProvider(providerId);
+        var authentication = provider is IProviderAuthenticationSource authenticationSource
+            ? await authenticationSource.GetAuthenticationStatusAsync(cancellationToken)
+                .ConfigureAwait(false)
+            : null;
+        return new ProviderSnapshot(
+            provider.ProviderId,
+            provider.Capabilities,
+            authentication);
     }
 
     public ValueTask<ProviderAuthenticationStatus> ImportOpenAiSubscriptionAsync(

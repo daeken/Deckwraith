@@ -68,6 +68,26 @@ app.MapGet("/api/v1/providers", async (CancellationToken cancellationToken) =>
         await session.ReadProviderSnapshotsAsync(cancellationToken).ConfigureAwait(false),
         ProtocolJson.Options));
 
+app.MapGet("/api/v1/providers/{providerId}", async (
+    string providerId,
+    CancellationToken cancellationToken) =>
+{
+    try
+    {
+        return Results.Json(
+            await session.ReadProviderSnapshotAsync(providerId, cancellationToken)
+                .ConfigureAwait(false),
+            ProtocolJson.Options);
+    }
+    catch (KeyNotFoundException exception)
+    {
+        return Results.Json(
+            new { code = "provider-not-found", exception.Message },
+            ProtocolJson.Options,
+            statusCode: StatusCodes.Status404NotFound);
+    }
+});
+
 app.MapPost("/api/v1/providers/openai-subscription/sign-in", async (
     CancellationToken cancellationToken) =>
 {
@@ -513,6 +533,7 @@ internal sealed class DesktopDeckException(string code, string message) : Except
 internal sealed class DesktopDeckSession : IDisposable
 {
     private readonly SemaphoreSlim _gate = new(1, 1);
+    private readonly List<DeckwraithHost> _retiredRuntimes = [];
     private DeckwraithHost _runtime;
     private bool _disposed;
 
@@ -566,7 +587,7 @@ internal sealed class DesktopDeckSession : IDisposable
                 var previous = _runtime;
                 _runtime = next;
                 DeckPath = normalized;
-                previous.Dispose();
+                _retiredRuntimes.Add(previous);
             }
 
             return new DeckSelectionResult(
@@ -581,19 +602,9 @@ internal sealed class DesktopDeckSession : IDisposable
 
     public async Task<HostResponse> ExecuteAsync(
         HostRequest request,
-        CancellationToken cancellationToken = default)
-    {
-        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
-        try
-        {
-            ObjectDisposedException.ThrowIf(_disposed, this);
-            return await _runtime.ExecuteAsync(request, cancellationToken).ConfigureAwait(false);
-        }
-        finally
-        {
-            _gate.Release();
-        }
-    }
+        CancellationToken cancellationToken = default) =>
+        await (await GetRuntimeAsync(cancellationToken).ConfigureAwait(false))
+            .ExecuteAsync(request, cancellationToken).ConfigureAwait(false);
 
     public IAsyncEnumerable<HostEvent> ReadEventsAsync(
         long afterCursor,
@@ -601,131 +612,76 @@ internal sealed class DesktopDeckSession : IDisposable
         _runtime.ReadEventsAsync(afterCursor, cancellationToken);
 
     public async ValueTask<IReadOnlyList<ProviderSnapshot>> ReadProviderSnapshotsAsync(
-        CancellationToken cancellationToken = default)
-    {
-        DeckwraithHost runtime;
-        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
-        try
-        {
-            ObjectDisposedException.ThrowIf(_disposed, this);
-            runtime = _runtime;
-        }
-        finally
-        {
-            _gate.Release();
-        }
+        CancellationToken cancellationToken = default) =>
+        await (await GetRuntimeAsync(cancellationToken).ConfigureAwait(false))
+            .ReadProviderSnapshotsAsync(cancellationToken).ConfigureAwait(false);
 
-        return await runtime.ReadProviderSnapshotsAsync(cancellationToken).ConfigureAwait(false);
-    }
+    public async ValueTask<ProviderSnapshot> ReadProviderSnapshotAsync(
+        string providerId,
+        CancellationToken cancellationToken = default) =>
+        await (await GetRuntimeAsync(cancellationToken).ConfigureAwait(false))
+            .ReadProviderSnapshotAsync(providerId, cancellationToken).ConfigureAwait(false);
 
     public async ValueTask<Deckwraith.Providers.Abstractions.ProviderAuthenticationStatus>
         ImportOpenAiSubscriptionAsync(
             string path,
-            CancellationToken cancellationToken = default)
-    {
-        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
-        try
-        {
-            ObjectDisposedException.ThrowIf(_disposed, this);
-            return await _runtime.ImportOpenAiSubscriptionAsync(path, cancellationToken)
-                .ConfigureAwait(false);
-        }
-        finally
-        {
-            _gate.Release();
-        }
-    }
+            CancellationToken cancellationToken = default) =>
+        await (await GetRuntimeAsync(cancellationToken).ConfigureAwait(false))
+            .ImportOpenAiSubscriptionAsync(path, cancellationToken).ConfigureAwait(false);
 
     public async Task<ConversationAttachment> StoreConversationAttachmentAsync(
         string wraith,
         string haunt,
         string path,
         string? mediaType,
-        CancellationToken cancellationToken = default)
-    {
-        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
-        try
-        {
-            ObjectDisposedException.ThrowIf(_disposed, this);
-            return await _runtime.StoreConversationAttachmentAsync(
+        CancellationToken cancellationToken = default) =>
+        await (await GetRuntimeAsync(cancellationToken).ConfigureAwait(false))
+            .StoreConversationAttachmentAsync(
                 wraith,
                 haunt,
                 path,
                 mediaType,
                 cancellationToken).ConfigureAwait(false);
-        }
-        finally
-        {
-            _gate.Release();
-        }
-    }
 
     public async ValueTask<Deckwraith.Providers.Abstractions.ProviderAuthenticationStatus>
         SignInOpenAiSubscriptionAsync(
             Func<Uri, CancellationToken, ValueTask> openBrowser,
-            CancellationToken cancellationToken = default)
-    {
-        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
-        try
-        {
-            ObjectDisposedException.ThrowIf(_disposed, this);
-            return await _runtime.SignInOpenAiSubscriptionAsync(
+            CancellationToken cancellationToken = default) =>
+        await (await GetRuntimeAsync(cancellationToken).ConfigureAwait(false))
+            .SignInOpenAiSubscriptionAsync(
                 openBrowser,
                 cancellationToken).ConfigureAwait(false);
-        }
-        finally
-        {
-            _gate.Release();
-        }
-    }
 
     public async ValueTask DisconnectOpenAiSubscriptionAsync(
-        CancellationToken cancellationToken = default)
-    {
-        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
-        try
-        {
-            ObjectDisposedException.ThrowIf(_disposed, this);
-            await _runtime.DisconnectOpenAiSubscriptionAsync(cancellationToken).ConfigureAwait(false);
-        }
-        finally
-        {
-            _gate.Release();
-        }
-    }
+        CancellationToken cancellationToken = default) =>
+        await (await GetRuntimeAsync(cancellationToken).ConfigureAwait(false))
+            .DisconnectOpenAiSubscriptionAsync(cancellationToken).ConfigureAwait(false);
 
     public async ValueTask<Deckwraith.Providers.Abstractions.ProviderAuthenticationStatus>
         SetProviderApiKeyAsync(
             string providerId,
             string apiKey,
-            CancellationToken cancellationToken = default)
-    {
-        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
-        try
-        {
-            ObjectDisposedException.ThrowIf(_disposed, this);
-            return await _runtime.SetProviderApiKeyAsync(
+            CancellationToken cancellationToken = default) =>
+        await (await GetRuntimeAsync(cancellationToken).ConfigureAwait(false))
+            .SetProviderApiKeyAsync(
                 providerId,
                 apiKey,
                 cancellationToken).ConfigureAwait(false);
-        }
-        finally
-        {
-            _gate.Release();
-        }
-    }
 
     public async ValueTask<Deckwraith.Providers.Abstractions.ProviderAuthenticationStatus>
         DeleteStoredProviderApiKeyAsync(
             string providerId,
-            CancellationToken cancellationToken = default)
+            CancellationToken cancellationToken = default) =>
+        await (await GetRuntimeAsync(cancellationToken).ConfigureAwait(false))
+            .DeleteStoredProviderApiKeyAsync(providerId, cancellationToken).ConfigureAwait(false);
+
+    private async ValueTask<DeckwraithHost> GetRuntimeAsync(CancellationToken cancellationToken)
     {
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
-            return await _runtime.DeleteStoredProviderApiKeyAsync(providerId, cancellationToken)
-                .ConfigureAwait(false);
+            return _runtime;
         }
         finally
         {
@@ -742,6 +698,11 @@ internal sealed class DesktopDeckSession : IDisposable
 
         _disposed = true;
         _runtime.Dispose();
+        foreach (var runtime in _retiredRuntimes)
+        {
+            runtime.Dispose();
+        }
+
         _gate.Dispose();
     }
 }

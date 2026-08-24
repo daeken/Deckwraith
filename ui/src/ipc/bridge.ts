@@ -2,6 +2,7 @@ import type { HostEvent, ProviderAuthenticationStatus, ProviderSnapshot } from "
 import { HOST_PROTOCOL_VERSION } from "./protocol";
 
 type RequestKind = "command" | "query";
+type RequestOptions = { signal?: AbortSignal };
 
 export type HostStatus = {
   protocolVersion: number;
@@ -180,8 +181,26 @@ export async function disconnectOpenAiSession(): Promise<ProviderSnapshot[]> {
 }
 
 export async function readProviderSnapshots(): Promise<ProviderSnapshot[]> {
-  const response = await fetch("/api/v1/providers", { cache: "no-store" });
+  const response = await fetchProviderStatus("/api/v1/providers");
   const result = (await response.json()) as ProviderSnapshot[] & {
+    code?: string;
+    message?: string;
+  };
+  if (!response.ok) {
+    throw new BridgeError(result.code ?? "transport", result.message ?? response.statusText, true);
+  }
+  return result;
+}
+
+export async function readProviderSnapshot(
+  providerId: string,
+  signal?: AbortSignal,
+): Promise<ProviderSnapshot> {
+  const response = await fetchProviderStatus(
+    `/api/v1/providers/${encodeURIComponent(providerId)}`,
+    signal,
+  );
+  const result = (await response.json()) as ProviderSnapshot & {
     code?: string;
     message?: string;
   };
@@ -230,10 +249,12 @@ export async function request<T>(
   kind: RequestKind,
   name: string,
   payload: object = {},
+  options: RequestOptions = {},
 ): Promise<T> {
   const response = await fetch("/api/v1/request", {
     method: "POST",
     headers: { "content-type": "application/json" },
+    signal: options.signal,
     body: JSON.stringify({
       protocolVersion: HOST_PROTOCOL_VERSION,
       requestId: crypto.randomUUID(),
@@ -263,11 +284,38 @@ export async function request<T>(
   return envelope.result as T;
 }
 
-export const command = <T>(name: string, payload: object = {}) =>
-  request<T>("command", name, payload);
+export const command = <T>(name: string, payload: object = {}, options: RequestOptions = {}) =>
+  request<T>("command", name, payload, options);
 
-export const query = <T>(name: string, payload: object = {}) =>
-  request<T>("query", name, payload);
+export const query = <T>(name: string, payload: object = {}, options: RequestOptions = {}) =>
+  request<T>("query", name, payload, options);
+
+async function fetchProviderStatus(url: string, signal?: AbortSignal): Promise<Response> {
+  const controller = new AbortController();
+  let timedOut = false;
+  const forwardAbort = () => controller.abort(signal?.reason);
+  if (signal?.aborted) forwardAbort();
+  else signal?.addEventListener("abort", forwardAbort, { once: true });
+  const timeout = globalThis.setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, 5000);
+  try {
+    return await fetch(url, { cache: "no-store", signal: controller.signal });
+  } catch (reason) {
+    if (timedOut) {
+      throw new BridgeError(
+        "credential-check-timeout",
+        "The installation credential store did not answer. Reopen Provider access to retry.",
+        true,
+      );
+    }
+    throw reason;
+  } finally {
+    globalThis.clearTimeout(timeout);
+    signal?.removeEventListener("abort", forwardAbort);
+  }
+}
 
 export function subscribe(
   initialCursor: number,

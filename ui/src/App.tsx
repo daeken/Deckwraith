@@ -2,7 +2,7 @@ import * as Dialog from "@radix-ui/react-dialog";
 import * as ScrollArea from "@radix-ui/react-scroll-area";
 import * as Tabs from "@radix-ui/react-tabs";
 import clsx from "clsx";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   assertProtocolCompatible,
   BridgeError,
@@ -14,6 +14,7 @@ import {
   pickDeckFolder,
   pickProjectFolder,
   query,
+  readProviderSnapshot,
   readProviderSnapshots,
   selectDeckPath,
   setProviderApiKey,
@@ -157,12 +158,17 @@ export function App() {
       await action();
       await refresh();
     } catch (reason) {
+      if (isAbortError(reason)) {
+        await new Promise((resolve) => globalThis.setTimeout(resolve, 120));
+      }
       try {
         await refresh();
       } catch {
         // Preserve the original mutation failure; a later event reconnect can recover the view.
       }
-      setError(messageOf(reason));
+      const handledInline = reason instanceof BridgeError &&
+        reason.code === "provider-access-required";
+      setError(isAbortError(reason) || handledInline ? "" : messageOf(reason));
     } finally {
       setBusy(false);
     }
@@ -413,13 +419,14 @@ export function App() {
                 context={wraith.context}
                 identity={wraith.identity}
                 runs={wraith.runs}
-                providers={deck?.providers.map((provider) => provider.providerId) ?? []}
+                providers={providerAccess}
                 wraith={selectedWraith}
                 haunt={selectedHaunt}
                 defaultPath={deck?.haunts.find((item) => item.name === selectedHaunt)?.project
                   ?.projectPath ?? deckPath}
                 busy={busy}
                 mutate={mutate}
+                onProviderAuthentication={updateProviderAuthentication}
               />
             </Tabs.Content>
             <Tabs.Content className="tab-content" value="identity">
@@ -540,16 +547,17 @@ function IdentityList({ values }: { values: string[] }) {
     : <p className="identity-copy empty-copy">None recorded.</p>;
 }
 
-function ConversationPanel({ context, identity, runs, providers, wraith, haunt, defaultPath, busy, mutate }: {
+function ConversationPanel({ context, identity, runs, providers, wraith, haunt, defaultPath, busy, mutate, onProviderAuthentication }: {
   context: WraithSnapshot["context"];
   identity: IdentityDocument;
   runs: RunDocument[];
-  providers: string[];
+  providers: ProviderSnapshot[];
   wraith: string;
   haunt: string;
   defaultPath: string;
   busy: boolean;
   mutate: (action: AsyncAction) => Promise<void>;
+  onProviderAuthentication: (authentication: ProviderAuthenticationStatus) => void;
 }) {
   const [message, setMessage] = useState("");
   const [provider, setProvider] = useState("openai-codex-subscription");
@@ -557,6 +565,9 @@ function ConversationPanel({ context, identity, runs, providers, wraith, haunt, 
   const [attachments, setAttachments] = useState<ConversationAttachment[]>([]);
   const [attachmentError, setAttachmentError] = useState("");
   const [picking, setPicking] = useState(false);
+  const [turnActive, setTurnActive] = useState(false);
+  const [turnStopping, setTurnStopping] = useState(false);
+  const turnController = useRef<AbortController | null>(null);
   const active = [...runs].reverse().find((run) => !isTerminalRun(run));
   const focusedHaunt = active?.haunt ?? haunt;
   const items = context?.items ?? [];
@@ -564,28 +575,50 @@ function ConversationPanel({ context, identity, runs, providers, wraith, haunt, 
   const providerLabel = active?.shells.at(-1)?.provider ?? provider;
   const modelLabel = active?.shells.at(-1)?.model ?? model;
   const displayName = identity.name;
+  const authentication = providers.find((item) => item.providerId === provider)?.authentication;
 
-  const send = () => mutate(async () => {
-    const text = conversationMessage(message.trim(), attachments);
-    let runId = active?.runId;
-    if (!runId) {
-      const objective = message.trim().split("\n")[0]?.slice(0, 120) ||
-        `Review attached files in ${focusedHaunt ?? "the current context"}`;
-      const started = await command<{ run: RunDocument }>("run.start", {
-        wraith,
-        haunt: focusedHaunt || null,
-        objective,
-        provider,
-        model,
-      });
-      runId = started.run.runId;
-    }
+  const send = () => {
+    if (turnController.current) return Promise.resolve();
+    const controller = new AbortController();
+    turnController.current = controller;
+    setTurnActive(true);
+    setTurnStopping(false);
+    return mutate(async () => {
+      const text = conversationMessage(message.trim(), attachments);
+      let runId = active?.runId;
+      if (!runId) {
+        const checked = await readProviderSnapshot(provider, controller.signal);
+        if (checked.authentication) {
+          onProviderAuthentication(checked.authentication);
+          if (["missing", "rejected", "error"].includes(checked.authentication.state)) {
+            throw new BridgeError("provider-access-required", checked.authentication.message);
+          }
+        }
+        const objective = message.trim().split("\n")[0]?.slice(0, 120) ||
+          `Review attached files in ${focusedHaunt ?? "the current context"}`;
+        const started = await command<{ run: RunDocument }>("run.start", {
+          wraith,
+          haunt: focusedHaunt || null,
+          objective,
+          provider,
+          model,
+        }, { signal: controller.signal });
+        runId = started.run.runId;
+      }
 
-    await command("run.turn", { wraith, runId, message: text });
-    setMessage("");
-    setAttachments([]);
-    setAttachmentError("");
-  });
+      try {
+        await command("run.turn", { wraith, runId, message: text }, { signal: controller.signal });
+      } finally {
+        setMessage("");
+        setAttachments([]);
+        setAttachmentError("");
+      }
+    }).finally(() => {
+      turnController.current = null;
+      setTurnActive(false);
+      setTurnStopping(false);
+    });
+  };
 
   return <div className="conversation-layout">
     <div className="conversation-presence">
@@ -654,14 +687,22 @@ function ConversationPanel({ context, identity, runs, providers, wraith, haunt, 
             <summary>{providerLabel} · {modelLabel}</summary>
             <div className="connection-fields">
               <label>Provider<select value={provider} onChange={(event) => setProvider(event.target.value)}>
-                {providers.map((item) => <option key={item}>{item}</option>)}
+                {providers.map((item) => <option key={item.providerId}>{item.providerId}</option>)}
               </select></label>
               <label>Model<input value={model} onChange={(event) => setModel(event.target.value)} /></label>
             </div>
           </details>}
         </div>
-        <div className="send-cluster"><small>⌘↵ to send</small><button className="primary conversation-send" disabled={busy || !sendable} onClick={() => void send()}>{active ? "Send" : "Start conversation"}</button></div>
+        <div className="send-cluster"><small>{turnActive ? "The current turn can be stopped safely" : "⌘↵ to send"}</small>{turnActive
+          ? <button className="danger conversation-send" disabled={turnStopping} onClick={() => {
+            setTurnStopping(true);
+            turnController.current?.abort();
+          }}>{turnStopping ? "Stopping…" : "Stop turn"}</button>
+          : <button className="primary conversation-send" disabled={busy || !sendable} onClick={() => void send()}>{active ? "Send" : "Start conversation"}</button>}</div>
       </div>
+      {!active && authentication && <div className={clsx("provider-inline-status", authentication.state)}>
+        <StatusPill value={authentication.state} /><span>{authentication.message}</span>
+      </div>}
       {attachmentError && <div className="setup-error"><b>Couldn’t attach that.</b> {attachmentError}</div>}
     </section>
   </div>;
@@ -1336,6 +1377,9 @@ function formatBytes(value: number) {
   return `${(value / (1024 * 1024)).toFixed(1)} MB`;
 }
 function messageOf(value: unknown) { return value instanceof Error ? value.message : String(value); }
+function isAbortError(value: unknown) {
+  return value instanceof DOMException && value.name === "AbortError";
+}
 
 function applyTheme(theme: ThemePreference["theme"], tokens: Record<string, string>) {
   const root = document.documentElement;

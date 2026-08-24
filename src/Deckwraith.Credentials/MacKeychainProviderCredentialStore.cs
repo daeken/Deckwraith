@@ -8,6 +8,7 @@ public sealed class MacKeychainProviderCredentialStore : IProviderCredentialStor
 {
     private const string ServiceName = "local.deckwraith.credentials";
     private const int ItemNotFound = -25300;
+    private const int InteractionNotAllowed = -25308;
     private static readonly SemaphoreSlim KeychainGate = new(1, 1);
 
     public MacKeychainProviderCredentialStore()
@@ -29,15 +30,30 @@ public sealed class MacKeychainProviderCredentialStore : IProviderCredentialStor
         {
             var account = EncodeCredentialId(credentialId);
             var service = Encoding.UTF8.GetBytes(ServiceName);
-            var result = NativeMethods.SecKeychainFindGenericPassword(
-                IntPtr.Zero,
-                checked((uint)service.Length),
-                service,
-                checked((uint)account.Length),
-                account,
-                out var passwordLength,
-                out var passwordData,
-                out var item);
+            ThrowIfFailed(
+                NativeMethods.SecKeychainSetUserInteractionAllowed(0),
+                "disable interactive access for read");
+            int result;
+            uint passwordLength;
+            IntPtr passwordData;
+            IntPtr item;
+            try
+            {
+                result = NativeMethods.SecKeychainFindGenericPassword(
+                    IntPtr.Zero,
+                    checked((uint)service.Length),
+                    service,
+                    checked((uint)account.Length),
+                    account,
+                    out passwordLength,
+                    out passwordData,
+                    out item);
+            }
+            finally
+            {
+                _ = NativeMethods.SecKeychainSetUserInteractionAllowed(1);
+            }
+
             if (result == ItemNotFound)
             {
                 return null;
@@ -197,6 +213,14 @@ public sealed class MacKeychainProviderCredentialStore : IProviderCredentialStor
 
     private static void ThrowIfFailed(int result, string operation)
     {
+        if (result == InteractionNotAllowed)
+        {
+            throw new ProviderCredentialStoreException(
+                "macOS Keychain requires approval before Deckwraith can read this credential. " +
+                "Reconnect it from Provider access.",
+                result);
+        }
+
         if (result != 0)
         {
             throw new ProviderCredentialStoreException(
@@ -219,6 +243,9 @@ public sealed class MacKeychainProviderCredentialStore : IProviderCredentialStor
             "/System/Library/Frameworks/Security.framework/Versions/Current/Security";
         private const string CoreFoundationFramework =
             "/System/Library/Frameworks/CoreFoundation.framework/Versions/Current/CoreFoundation";
+
+        [DllImport(SecurityFramework)]
+        internal static extern int SecKeychainSetUserInteractionAllowed(byte state);
 
         [DllImport(SecurityFramework)]
         internal static extern int SecKeychainFindGenericPassword(

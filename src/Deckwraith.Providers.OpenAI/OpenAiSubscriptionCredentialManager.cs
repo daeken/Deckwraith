@@ -530,7 +530,8 @@ public sealed class OpenAiSubscriptionCredentialManager : IProviderAuthenticatio
         {
             throw new OpenAiAuthenticationException(
                 "credential-store-read",
-                "Deckwraith could not read the stored ChatGPT credential.",
+                "Deckwraith could not read the stored ChatGPT credential. " +
+                "Reconnect it from Provider access.",
                 true,
                 exception);
         }
