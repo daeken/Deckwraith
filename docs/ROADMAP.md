@@ -1,7 +1,7 @@
 # Delivery roadmap
 
 The specification's eight vertical milestones are implemented and remain the release spine. Each
-ended in an independently usable, end-to-end tested repository; the remaining v1 gate is a live
+ended in an independently usable, end-to-end tested repository. The v1 gate concluded with a live
 inside-out bootstrap through the ChatGPT-subscription provider.
 
 ## 1. State spine — implemented

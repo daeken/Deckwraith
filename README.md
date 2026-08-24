@@ -4,7 +4,7 @@ Deckwraith is a local-first runtime for durable autonomous agent identities. Mod
 replaceable shells; identity, current context, archives, tools, executable deckbooks, and
 recovery history belong to the wraith.
 
-The repository is a v1 release candidate. All eight delivery milestones are implemented:
+The repository implements v1. All eight delivery milestones are complete:
 
 - Git-backed wraith and haunt state with canonical names, reserved rename aliases, archival,
   append-only private archives, content-addressed artifacts, and coherent checkpoints.

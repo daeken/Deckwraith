@@ -71,12 +71,13 @@ public sealed class InferenceSpineEndToEndTests
         ShellReplacementResult replacement;
         TurnResult second;
         RunEndResult completedRun;
+        var replacementProvider = new CapturingProvider();
         using (var replacementRuntime = new InferenceRuntime(
             new JsonDeckStateStore(temporaryDirectory.Path),
             new JsonInferenceStateStore(temporaryDirectory.Path),
             new JsonlAgentArchive(temporaryDirectory.Path),
             new GitCheckpointStore(temporaryDirectory.Path),
-            new ModelProviderRegistry([provider]),
+            new ModelProviderRegistry([provider, replacementProvider]),
             tools,
             new FixedClock(),
             defaultToolElisionTurns: 0))
@@ -84,7 +85,7 @@ public sealed class InferenceSpineEndToEndTests
             replacement = await replacementRuntime.ReplaceShellAsync(
                 "wraith1",
                 started.Run.RunId,
-                "fake",
+                "capture",
                 "replacement-model",
                 "context-window-replaced",
                 CancellationToken.None);
@@ -97,11 +98,12 @@ public sealed class InferenceSpineEndToEndTests
                 CancellationToken.None);
         }
 
-        Assert.Equal("second turn", second.Text);
+        Assert.Equal("isolated", second.Text);
         Assert.Equal(2, second.Context.Turn);
         Assert.Equal(2, replacement.Run.Shells.Count);
         Assert.Equal("context-window-replaced", replacement.PreviousShell.EndReason);
         Assert.NotNull(replacement.PreviousShell.EndedAt);
+        Assert.Equal("capture", replacement.CurrentShell.Provider);
         Assert.Equal("replacement-model", replacement.CurrentShell.Model);
         Assert.Equal(RunStatus.Completed, completedRun.Run.Status);
         Assert.NotNull(completedRun.Shell.EndedAt);
@@ -109,7 +111,17 @@ public sealed class InferenceSpineEndToEndTests
             second.Context.Items, item => item.Kind is ContextItemKind.ToolElision);
         Assert.Null(marker.Input);
         Assert.Null(marker.Output);
-        Assert.Equal(3, provider.InvocationCount);
+        Assert.Equal(2, provider.InvocationCount);
+        var replacementRequest = Assert.Single(replacementProvider.Requests);
+        Assert.Equal("wraith1", replacementRequest.Identity.Name);
+        Assert.Equal("replacement-model", replacementRequest.Model);
+        Assert.Equal(started.Run.Objective, replacementRequest.Objective);
+        Assert.Equal(
+            replacementRequest.Manifest.IdentityHash,
+            CanonicalJson.Hash(replacementRequest.Identity));
+        Assert.Contains(
+            replacementRequest.Context.Items,
+            item => item.Kind is ContextItemKind.ToolElision);
 
         var records = await archive.ReadAllAsync(
             Deckwraith.Core.Naming.CanonicalName.Parse("wraith1"), CancellationToken.None);

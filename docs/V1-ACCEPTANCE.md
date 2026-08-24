@@ -1,6 +1,6 @@
 # V1 acceptance ledger
 
-Status: release candidate  
+Status: v1.0.0 release gate complete
 Last verified: 2026-08-23
 
 This ledger maps the architecture scenario in [SPEC.md](../SPEC.md#22-acceptance-criteria-for-the-architecture)
@@ -25,7 +25,7 @@ the live bootstrap gate exercises the assembled runtime against the ChatGPT-subs
 | 14 | Crash recovery reconciles outcome-unknown without blind replay | `RecoveryEndToEndTests.CrashRecoveryMarksUnknownRebuildsProjectionAndRollsShellCold` | Green |
 | 15 | Git reversal preserves the history it reverses | `RecoveryEndToEndTests.ReversalCreatesRecoveryBranchAndNewInverseCommit` | Green |
 | 16 | Rename updates mutable references and reserves historical aliases | `StateSpineEndToEndTests` rename/recovery scenarios | Green |
-| 17 | A different provider shell inherits the same durable wraith | provider contract suite plus inference shell-replacement end-to-end; live subscription bootstrap | Live gate pending |
+| 17 | A different provider shell inherits the same durable wraith | inference end-to-end explicitly replaces a `fake` shell with `capture` while retaining identity/objective/context; all provider contracts; live subscription bootstrap | Green |
 | 18 | Core lifecycle runs on Linux without desktop dependencies | `eng/verify-headless.sh`; Linux CI | Green |
 
 Additional v1 product evidence:
@@ -42,9 +42,29 @@ Additional v1 product evidence:
 - Production dependency audits for both the renderer and packaged Electron host report no known
   vulnerabilities at the time of this candidate.
 
-## Release decision
+## Live inside-out bootstrap
 
-Do not tag `v1.0.0` until one disposable deck completes a real inside-out run through
-`openai-codex-subscription`, using the installed ChatGPT session, and its identity, context,
-archive, run records, checkpoints, and clean Git state have been inspected. Record that evidence
-here before changing the status from release candidate to released.
+On 2026-08-23, a calibrated `bootstrap` wraith completed run
+`01a0319ca1f4783d92c9524be0624c33` through `openai-codex-subscription` and `gpt-5.6-sol` using the
+installed ChatGPT session. Starting from source commit `1374760640606d40077b6c706ceb369d0eace5a1`,
+it used only Deckwraith's constrained `Invoke-PowerShell` surface to inspect the specification,
+acceptance ledger, subscription adapter, headless composition, and inference tests.
+
+The wraith ran 17 focused tests successfully, found no release-blocking defect, changed no source
+files, and persisted structured agent-scoped `bootstrap-v1` evidence with content hash
+`sha256:b693cf542c31cde61cc50a9d9a61168c4d043d8e504c75358346222de11303b2`. One exploratory tool
+call failed on a PowerShell serialization edge and was durably closed as failed; the wraith adapted
+without replay and completed five subsequent calls.
+
+Post-run inspection verified:
+
+- terminal run and shell records with an explicit completion reason;
+- identity personality plus `register` and `opsec` calibration in every model request;
+- `context.json` revision 9, turn 1, archive frontier 35, six tool interactions, and two messages;
+- 37 sequenced archive records with paired operation lifecycles, including the recovered failure;
+- the persisted durable evidence value, a clean deck worktree, a clean source worktree, and a clean
+  deck `git fsck`;
+- final deck checkpoints for durable-state write, model-turn completion, and run completion.
+
+The same candidate also passed the complete 79-test Release suite, renderer protocol/lint/build,
+the portable headless dependency gate, and local signed macOS ZIP/DMG packaging for version 1.0.0.
