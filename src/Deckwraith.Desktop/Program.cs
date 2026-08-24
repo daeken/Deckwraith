@@ -83,6 +83,32 @@ app.MapPost("/api/v1/deck/pick", async (DeckPickerRequest request) =>
     return Results.Json(new { path = selected.FirstOrDefault() }, ProtocolJson.Options);
 });
 
+app.MapPost("/api/v1/project/pick", async (DeckPickerRequest request) =>
+{
+    if (!HybridSupport.IsElectronActive || mainWindow is null)
+    {
+        return Results.Json(
+            new { code = "native-dialog-unavailable", message = "Enter the project folder directly in this host." },
+            ProtocolJson.Options,
+            statusCode: StatusCodes.Status501NotImplemented);
+    }
+
+    var selected = await Electron.Dialog.ShowOpenDialogAsync(
+        mainWindow,
+        new OpenDialogOptions
+        {
+            Title = "Choose the haunt's project folder",
+            ButtonLabel = "Use this project",
+            DefaultPath = FindExistingDirectory(request.DefaultPath ?? session.DeckPath),
+            Properties =
+            [
+                OpenDialogProperty.openDirectory,
+                OpenDialogProperty.showHiddenFiles,
+            ],
+        });
+    return Results.Json(new { path = selected.FirstOrDefault() }, ProtocolJson.Options);
+});
+
 app.MapPost("/api/v1/deck/select", async (
     DeckSelectionRequest request,
     CancellationToken cancellationToken) =>

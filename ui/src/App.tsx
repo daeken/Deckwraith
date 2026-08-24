@@ -8,6 +8,7 @@ import {
   BridgeError,
   command,
   pickDeckFolder,
+  pickProjectFolder,
   query,
   selectDeckPath,
   subscribe,
@@ -18,6 +19,7 @@ import type {
   DeckSnapshot,
   DeckbookCell,
   DeckbookSnapshot,
+  HauntProjectPolicy,
   HostEvent,
   IdentityDocument,
   RunDocument,
@@ -226,6 +228,25 @@ export function App() {
             setSelectedHaunt(name.toLowerCase());
           })}
         />
+        {selectedHaunt && <HauntProjectDialog
+          haunt={selectedHaunt}
+          policy={deck?.haunts.find((item) => item.name === selectedHaunt)?.project ?? null}
+          defaultPath={deckPath}
+          busy={busy}
+          onSave={async (settings) => {
+            setBusy(true);
+            setError("");
+            try {
+              await command("haunt.configure-project", { haunt: selectedHaunt, ...settings });
+              await refresh();
+            } catch (reason) {
+              setError(messageOf(reason));
+              throw reason;
+            } finally {
+              setBusy(false);
+            }
+          }}
+        />}
         <div className="deck-location" title={deckPath}>
           <span>Deck folder</span>
           <code>{deckPath}</code>
@@ -603,6 +624,116 @@ function CreateEntityDialog({ label, title, placeholder, onCreate }: { label: st
   const [name, setName] = useState("");
   const [open, setOpen] = useState(false);
   return <Dialog.Root open={open} onOpenChange={setOpen}><Dialog.Trigger asChild><button className="quiet add-button">＋ {label}</button></Dialog.Trigger><Dialog.Portal><Dialog.Overlay className="dialog-overlay" /><Dialog.Content className="dialog-content"><Dialog.Title>{title}</Dialog.Title><Dialog.Description>Use a portable canonical name. It can be changed later without breaking history.</Dialog.Description><input autoFocus value={name} placeholder={placeholder} onChange={(event) => setName(event.target.value)} /><div className="action-row"><Dialog.Close asChild><button>Cancel</button></Dialog.Close><button className="primary" disabled={!name} onClick={() => { void onCreate(name).then(() => { setName(""); setOpen(false); }); }}>Create</button></div></Dialog.Content></Dialog.Portal></Dialog.Root>;
+}
+
+type HauntProjectSettings = {
+  projectPath: string;
+  autoCommitEnabled: boolean;
+  author: { mode: "wraith" | "fixed"; name: string | null; email: string | null };
+  allowedPaths: string[];
+  allowDirtyWorkingTree: boolean;
+};
+
+function HauntProjectDialog({ haunt, policy, defaultPath, busy, onSave }: {
+  haunt: string;
+  policy: HauntProjectPolicy | null;
+  defaultPath: string;
+  busy: boolean;
+  onSave: (settings: HauntProjectSettings) => Promise<void>;
+}) {
+  const [open, setOpen] = useState(false);
+  const [path, setPath] = useState(policy?.projectPath ?? "");
+  const [autoCommit, setAutoCommit] = useState(policy?.autoCommitEnabled ?? false);
+  const [allowDirty, setAllowDirty] = useState(policy?.allowDirtyWorkingTree ?? false);
+  const [allowedPaths, setAllowedPaths] = useState((policy?.allowedPaths ?? ["."]).join("\n"));
+  const [authorMode, setAuthorMode] = useState<"wraith" | "fixed">(policy?.author.mode ?? "wraith");
+  const [authorName, setAuthorName] = useState(policy?.author.name ?? "");
+  const [authorEmail, setAuthorEmail] = useState(policy?.author.email ?? "");
+  const [pickerBusy, setPickerBusy] = useState(false);
+  const [localError, setLocalError] = useState("");
+
+  useEffect(() => {
+    if (open) return;
+    setPath(policy?.projectPath ?? "");
+    setAutoCommit(policy?.autoCommitEnabled ?? false);
+    setAllowDirty(policy?.allowDirtyWorkingTree ?? false);
+    setAllowedPaths((policy?.allowedPaths ?? ["."]).join("\n"));
+    setAuthorMode(policy?.author.mode ?? "wraith");
+    setAuthorName(policy?.author.name ?? "");
+    setAuthorEmail(policy?.author.email ?? "");
+    setLocalError("");
+  }, [open, policy]);
+
+  const scopes = allowedPaths.split(/[\n,]/).map((value) => value.trim()).filter(Boolean);
+  const fixedAuthorIncomplete = authorMode === "fixed" && (!authorName.trim() || !authorEmail.trim());
+  const canSave = !!path.trim() && scopes.length > 0 && !fixedAuthorIncomplete && !busy && !pickerBusy;
+  return <Dialog.Root open={open} onOpenChange={setOpen}>
+    <Dialog.Trigger asChild>
+      <button className="quiet project-settings-button">
+        <span>{policy ? "Project settings" : "Choose project folder"}</span>
+        {policy && <small>{policy.autoCommitEnabled ? "Auto-commit on" : "Auto-commit off"}</small>}
+      </button>
+    </Dialog.Trigger>
+    <Dialog.Portal>
+      <Dialog.Overlay className="dialog-overlay" />
+      <Dialog.Content className="dialog-content project-dialog">
+        <Dialog.Title>{haunt} project</Dialog.Title>
+        <Dialog.Description>Connect this haunt to a working directory. File edits stay inside the allowed scopes.</Dialog.Description>
+        <div className="project-form">
+          <label>Project folder<div className="path-picker">
+            <input value={path} onChange={(event) => setPath(event.target.value)} spellCheck={false} />
+            <button disabled={busy || pickerBusy} onClick={() => {
+              setPickerBusy(true);
+              setLocalError("");
+              void pickProjectFolder(path || defaultPath)
+                .then((selected) => { if (selected) setPath(selected); })
+                .catch((reason: unknown) => setLocalError(messageOf(reason)))
+                .finally(() => setPickerBusy(false));
+            }}>Choose…</button>
+          </div></label>
+          <label>Allowed paths
+            <textarea value={allowedPaths} onChange={(event) => setAllowedPaths(event.target.value)} placeholder={"src\ntests"} />
+            <small>One project-relative file or folder per line. Use <code>.</code> for the whole project.</small>
+          </label>
+          <label className="check-row">
+            <input type="checkbox" checked={autoCommit} onChange={(event) => setAutoCommit(event.target.checked)} />
+            <span><b>Commit successful file edits</b><small>Requires the wraith to attach a commit subject. Deckwraith never pushes.</small></span>
+          </label>
+          <label>Commit attribution
+            <select value={authorMode} onChange={(event) => setAuthorMode(event.target.value as "wraith" | "fixed")}>
+              <option value="wraith">Current wraith</option>
+              <option value="fixed">Fixed identity</option>
+            </select>
+          </label>
+          {authorMode === "fixed" && <div className="two-up">
+            <label>Name<input value={authorName} onChange={(event) => setAuthorName(event.target.value)} /></label>
+            <label>Email<input type="email" value={authorEmail} onChange={(event) => setAuthorEmail(event.target.value)} /></label>
+          </div>}
+          <label className="check-row">
+            <input type="checkbox" checked={allowDirty} onChange={(event) => setAllowDirty(event.target.checked)} />
+            <span><b>Permit an already-dirty repository</b><small>Only files in the edit receipt are committed; unrelated staged and unstaged work is preserved.</small></span>
+          </label>
+          {localError && <div className="setup-error"><b>That didn’t work.</b> {localError}</div>}
+        </div>
+        <div className="action-row">
+          <Dialog.Close asChild><button disabled={busy || pickerBusy}>Cancel</button></Dialog.Close>
+          <button className="primary" disabled={!canSave} onClick={() => {
+            void onSave({
+              projectPath: path.trim(),
+              autoCommitEnabled: autoCommit,
+              author: {
+                mode: authorMode,
+                name: authorMode === "fixed" ? authorName.trim() : null,
+                email: authorMode === "fixed" ? authorEmail.trim() : null,
+              },
+              allowedPaths: scopes,
+              allowDirtyWorkingTree: allowDirty,
+            }).then(() => setOpen(false)).catch((reason: unknown) => setLocalError(messageOf(reason)));
+          }}>Save project settings</button>
+        </div>
+      </Dialog.Content>
+    </Dialog.Portal>
+  </Dialog.Root>;
 }
 
 function DeckOnboarding({ path, busy, error, onPathChange, onChooseFolder, onInitialize }: {

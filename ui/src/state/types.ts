@@ -12,6 +12,7 @@ export type ProviderSnapshot = {
 };
 
 export type WraithDocument = {
+  schemaVersion: number;
   name: string;
   displayLabel: string | null;
   aliases: string[];
@@ -19,7 +20,28 @@ export type WraithDocument = {
   archivedAt: string | null;
 };
 
-export type HauntDocument = WraithDocument;
+export type ProjectCommitAuthor = {
+  mode: "wraith" | "fixed";
+  name: string | null;
+  email: string | null;
+};
+
+export type HauntProjectPolicy = {
+  projectPath: string;
+  autoCommitEnabled: boolean;
+  author: ProjectCommitAuthor;
+  allowedPaths: string[];
+  allowDirtyWorkingTree: boolean;
+};
+
+export type HauntDocument = {
+  schemaVersion: number;
+  name: string;
+  displayLabel: string | null;
+  aliases: string[];
+  createdAt: string;
+  project: HauntProjectPolicy | null;
+};
 
 export type DeckSnapshot = {
   wraiths: WraithDocument[];
