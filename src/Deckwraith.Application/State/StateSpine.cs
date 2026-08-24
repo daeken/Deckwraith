@@ -2,6 +2,7 @@ using System.Text.Json;
 using Deckwraith.Application.Abstractions;
 using Deckwraith.Core.Archives;
 using Deckwraith.Core.Naming;
+using Deckwraith.Core.Serialization;
 using Deckwraith.Core.State;
 
 namespace Deckwraith.Application.State;
@@ -220,6 +221,38 @@ public sealed class StateSpine : IDisposable
         var resolved = await ResolveWraithAsync(name, cancellationToken).ConfigureAwait(false);
         return await _state.ReadIdentityAsync(resolved, cancellationToken).ConfigureAwait(false);
     }
+
+    public Task<IReadOnlyList<WraithDocument>> ListWraithsAsync(
+        CancellationToken cancellationToken = default) =>
+        _state.ListWraithsAsync(cancellationToken);
+
+    public Task<IReadOnlyList<HauntDocument>> ListHauntsAsync(
+        CancellationToken cancellationToken = default) =>
+        _state.ListHauntsAsync(cancellationToken);
+
+    public Task<StateMutation<IdentityDocument>> UpdateIdentityAsync(
+        string wraith,
+        IdentityDocument identity,
+        CancellationToken cancellationToken = default) =>
+        WithMutationLockAsync(async () =>
+        {
+            await RecoverIfNeededAsync(cancellationToken).ConfigureAwait(false);
+            var resolved = await _state.ResolveWraithAsync(
+                CanonicalName.Parse(wraith), cancellationToken).ConfigureAwait(false);
+            var updated = await _state.WriteIdentityAsync(
+                resolved, identity, _clock.UtcNow, cancellationToken).ConfigureAwait(false);
+            await _archive.AppendAsync(
+                Event(resolved, "identity.updated", new
+                {
+                    identityHash = CanonicalJson.Hash(updated),
+                    updated.SchemaVersion,
+                    updated.UpdatedAt,
+                }),
+                cancellationToken).ConfigureAwait(false);
+            var commit = await _checkpoints.CheckpointAsync(
+                "identity-updated", resolved, null, cancellationToken).ConfigureAwait(false);
+            return new StateMutation<IdentityDocument>(updated, commit);
+        }, cancellationToken);
 
     public async Task<IReadOnlyList<ArchiveRecord>> ReadArchiveAsync(
         string name,

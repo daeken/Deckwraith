@@ -172,6 +172,70 @@ public sealed class JsonDeckStateStore : IDeckStateStore
             .ConfigureAwait(false);
     }
 
+    public async Task<IReadOnlyList<WraithDocument>> ListWraithsAsync(
+        CancellationToken cancellationToken)
+    {
+        EnsureInitialized();
+        var documents = new List<WraithDocument>();
+        foreach (var directory in Directory.EnumerateDirectories(
+            Path.Combine(RootPath, "agents")).Order(StringComparer.Ordinal))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var document = await AtomicJsonFile.ReadAsync<WraithDocument>(
+                Path.Combine(directory, "agent.json"), cancellationToken).ConfigureAwait(false);
+            _ = CanonicalName.Parse(document.Name);
+            documents.Add(document);
+        }
+
+        return documents.OrderBy(document => document.Name, StringComparer.Ordinal).ToArray();
+    }
+
+    public async Task<IReadOnlyList<HauntDocument>> ListHauntsAsync(
+        CancellationToken cancellationToken)
+    {
+        EnsureInitialized();
+        var documents = new List<HauntDocument>();
+        foreach (var directory in Directory.EnumerateDirectories(
+            Path.Combine(RootPath, "haunts")).Order(StringComparer.Ordinal))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var document = await AtomicJsonFile.ReadAsync<HauntDocument>(
+                Path.Combine(directory, "haunt.json"), cancellationToken).ConfigureAwait(false);
+            _ = CanonicalName.Parse(document.Name);
+            documents.Add(document);
+        }
+
+        return documents.OrderBy(document => document.Name, StringComparer.Ordinal).ToArray();
+    }
+
+    public async Task<IdentityDocument> WriteIdentityAsync(
+        CanonicalName name,
+        IdentityDocument identity,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(identity);
+        var resolved = await ResolveWraithAsync(name, cancellationToken).ConfigureAwait(false);
+        if (!StringComparer.Ordinal.Equals(identity.Name, resolved.Value))
+        {
+            throw new DeckStateException(
+                $"Identity name '{identity.Name}' does not match wraith '{resolved}'.");
+        }
+
+        if (identity.SchemaVersion != IdentityDocument.CurrentSchemaVersion)
+        {
+            throw new DeckStateException(
+                $"Identity schema {identity.SchemaVersion} is not supported.");
+        }
+
+        var updated = identity with { UpdatedAt = now };
+        await AtomicJsonFile.WriteAsync(
+            Path.Combine(EntityPath("agents", resolved), "identity.json"),
+            updated,
+            cancellationToken).ConfigureAwait(false);
+        return updated;
+    }
+
     public Task<RenameIntent> RenameWraithAsync(
         CanonicalName source,
         CanonicalName target,

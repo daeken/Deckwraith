@@ -33,6 +33,16 @@ public interface IDeckStateStore
 
     Task<IdentityDocument> ReadIdentityAsync(CanonicalName name, CancellationToken cancellationToken);
 
+    Task<IReadOnlyList<WraithDocument>> ListWraithsAsync(CancellationToken cancellationToken);
+
+    Task<IReadOnlyList<HauntDocument>> ListHauntsAsync(CancellationToken cancellationToken);
+
+    Task<IdentityDocument> WriteIdentityAsync(
+        CanonicalName name,
+        IdentityDocument identity,
+        DateTimeOffset now,
+        CancellationToken cancellationToken);
+
     Task<RenameIntent> RenameWraithAsync(
         CanonicalName source,
         CanonicalName target,
