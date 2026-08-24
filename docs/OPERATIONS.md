@@ -42,6 +42,9 @@ the selected provider without Deckwraith aliases.
 | `openai-codex-subscription` | Existing Codex sign-in with ChatGPT | Not applicable |
 | `anthropic` | `ANTHROPIC_API_KEY` | `DECKWRAITH_ANTHROPIC_BASE_URL` |
 | `google-gemini` | `GEMINI_API_KEY` | `DECKWRAITH_GOOGLE_BASE_URL` |
+| `openai-api` | `OPENAI_API_KEY` | `DECKWRAITH_OPENAI_BASE_URL` |
+| `xai-api` | `XAI_API_KEY` | `DECKWRAITH_XAI_BASE_URL` |
+| `zai-api` | `ZAI_API_KEY` | `DECKWRAITH_ZAI_BASE_URL` |
 | `openai-compatible` | `OPENAI_API_KEY` | `DECKWRAITH_OPENAI_BASE_URL` |
 
 The default HTTP endpoints are Anthropic's Messages API, Google's Gemini API, and OpenAI's
@@ -86,8 +89,17 @@ GEMINI_API_KEY=... dotnet run --project src/Deckwraith.Headless -- run-provider 
   /path/to/deck-state wraith1 deckwraith google-gemini MODEL OBJECTIVE MESSAGE
 
 OPENAI_API_KEY=... dotnet run --project src/Deckwraith.Headless -- run-provider \
-  /path/to/deck-state wraith1 deckwraith openai-compatible MODEL OBJECTIVE MESSAGE
+  /path/to/deck-state wraith1 deckwraith openai-api MODEL OBJECTIVE MESSAGE
+
+XAI_API_KEY=... dotnet run --project src/Deckwraith.Headless -- run-provider \
+  /path/to/deck-state wraith1 deckwraith xai-api MODEL OBJECTIVE MESSAGE
+
+ZAI_API_KEY=... dotnet run --project src/Deckwraith.Headless -- run-provider \
+  /path/to/deck-state wraith1 deckwraith zai-api MODEL OBJECTIVE MESSAGE
 ```
+
+`openai-compatible` remains registered as a compatibility alias for pre-1.0 decks that already
+reference it. New OpenAI shells should select `openai-api`.
 
 Credentials are read from the host environment at invocation time and are not written into normal
 provider configuration. They can still leak transitively if a tool, model, log, or artifact emits

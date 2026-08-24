@@ -72,10 +72,12 @@ public sealed class HttpProviderContractTests
             """);
         var provider = new OpenAICompatibleProvider(
             new OpenAICompatibleProviderOptions(
-                new Uri("https://openai.test/"), credential.Name),
+                new Uri("https://openai.test/"),
+                credential.Name,
+                ProviderId: "xai-api"),
             new HttpClient(handler));
 
-        var events = await CollectAsync(provider, CreateRequest("openai-compatible"));
+        var events = await CollectAsync(provider, CreateRequest("xai-api"));
 
         Assert.Equal("resp-1", Assert.IsType<ModelResponseStarted>(events[0]).ProviderRequestId);
         Assert.Equal("hello ", Assert.IsType<ModelTextDelta>(events[1]).Delta);
@@ -88,6 +90,7 @@ public sealed class HttpProviderContractTests
             Assert.IsType<ModelResponseCompleted>(events[4]).FinishReason);
         Assert.Equal("Bearer test-secret", handler.Authorization);
         Assert.EndsWith("/v1/responses", handler.RequestUri, StringComparison.Ordinal);
+        Assert.Equal("xai-api", provider.ProviderId);
     }
 
     [Fact]

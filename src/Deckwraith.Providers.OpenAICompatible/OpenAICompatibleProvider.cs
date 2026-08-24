@@ -11,7 +11,8 @@ public sealed record OpenAICompatibleProviderOptions(
     Uri BaseUri,
     string ApiKeyEnvironment = "OPENAI_API_KEY",
     string ResponsesPath = "v1/responses",
-    IReadOnlyDictionary<string, string>? Headers = null)
+    IReadOnlyDictionary<string, string>? Headers = null,
+    string ProviderId = "openai-compatible")
 {
     public static OpenAICompatibleProviderOptions CreateDefault() =>
         new(new Uri("https://api.openai.com/"));
@@ -29,11 +30,12 @@ public sealed class OpenAICompatibleProvider : IModelProvider
     {
         _options = options ?? OpenAICompatibleProviderOptions.CreateDefault();
         _client = client ?? SharedClient;
+        ArgumentException.ThrowIfNullOrWhiteSpace(_options.ProviderId);
         ArgumentException.ThrowIfNullOrWhiteSpace(_options.ApiKeyEnvironment);
         ArgumentException.ThrowIfNullOrWhiteSpace(_options.ResponsesPath);
     }
 
-    public string ProviderId => "openai-compatible";
+    public string ProviderId => _options.ProviderId;
 
     public ProviderCapabilities Capabilities { get; } = new(
         Streaming: true,
@@ -94,7 +96,7 @@ public sealed class OpenAICompatibleProvider : IModelProvider
         if (!response.IsSuccessStatusCode)
         {
             yield return new ModelProviderError(
-                "openai-compatible-http",
+                $"{ProviderId}-http",
                 await ProviderHttp.ReadErrorAsync(response, cancellationToken).ConfigureAwait(false),
                 ProviderHttp.IsRetryable(response.StatusCode));
             yield break;
@@ -171,7 +173,7 @@ public sealed class OpenAICompatibleProvider : IModelProvider
                 case "response.failed":
                 case "error":
                     yield return new ModelProviderError(
-                        "openai-compatible-stream",
+                        $"{ProviderId}-stream",
                         ReadError(item),
                         false);
                     yield break;

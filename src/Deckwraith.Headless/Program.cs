@@ -583,6 +583,18 @@ internal static class DeckwraithCli
                 "https://generativelanguage.googleapis.com/"))),
         new OpenAICompatibleProvider(new OpenAICompatibleProviderOptions(
             ReadUriEnvironment("DECKWRAITH_OPENAI_BASE_URL", "https://api.openai.com/"))),
+        new OpenAICompatibleProvider(new OpenAICompatibleProviderOptions(
+            ReadUriEnvironment("DECKWRAITH_OPENAI_BASE_URL", "https://api.openai.com/"),
+            ProviderId: "openai-api")),
+        new OpenAICompatibleProvider(new OpenAICompatibleProviderOptions(
+            ReadUriEnvironment("DECKWRAITH_XAI_BASE_URL", "https://api.x.ai/"),
+            ApiKeyEnvironment: "XAI_API_KEY",
+            ProviderId: "xai-api")),
+        new OpenAICompatibleProvider(new OpenAICompatibleProviderOptions(
+            ReadUriEnvironment("DECKWRAITH_ZAI_BASE_URL", "https://api.z.ai/api/v1/"),
+            ApiKeyEnvironment: "ZAI_API_KEY",
+            ResponsesPath: "responses",
+            ProviderId: "zai-api")),
     ]);
 
     private static Uri ReadUriEnvironment(string name, string fallback)

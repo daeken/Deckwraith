@@ -14,6 +14,18 @@ public sealed class HostBridgeEndToEndTests
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
     [Fact]
+    public void DefaultHostRegistersFirstClassOpenAiXaiAndZaiApis()
+    {
+        var providers = DeckwraithHostOptions.CreateDefault().CreateProviderRegistry().Providers;
+
+        Assert.Contains(providers, provider => provider.ProviderId == "anthropic");
+        Assert.Contains(providers, provider => provider.ProviderId == "openai-api");
+        Assert.Contains(providers, provider => provider.ProviderId == "xai-api");
+        Assert.Contains(providers, provider => provider.ProviderId == "zai-api");
+        Assert.Contains(providers, provider => provider.ProviderId == "openai-compatible");
+    }
+
+    [Fact]
     public async Task TypedBridgeOwnsLifecycleEventsReconnectAndIdentity()
     {
         var rootPath = Path.Combine(

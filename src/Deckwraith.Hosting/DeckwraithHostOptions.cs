@@ -13,6 +13,8 @@ public sealed record DeckwraithHostOptions(
     Uri AnthropicBaseUri,
     Uri GoogleBaseUri,
     Uri OpenAICompatibleBaseUri,
+    Uri XaiBaseUri,
+    Uri ZaiBaseUri,
     int EventCapacity = 2048)
 {
     public static DeckwraithHostOptions CreateDefault() => new(
@@ -22,7 +24,9 @@ public sealed record DeckwraithHostOptions(
         ReadUriEnvironment(
             "DECKWRAITH_GOOGLE_BASE_URL",
             "https://generativelanguage.googleapis.com/"),
-        ReadUriEnvironment("DECKWRAITH_OPENAI_BASE_URL", "https://api.openai.com/"));
+        ReadUriEnvironment("DECKWRAITH_OPENAI_BASE_URL", "https://api.openai.com/"),
+        ReadUriEnvironment("DECKWRAITH_XAI_BASE_URL", "https://api.x.ai/"),
+        ReadUriEnvironment("DECKWRAITH_ZAI_BASE_URL", "https://api.z.ai/api/v1/"));
 
     public ModelProviderRegistry CreateProviderRegistry(
         IEnumerable<IModelProvider>? additionalProviders = null)
@@ -35,6 +39,18 @@ public sealed record DeckwraithHostOptions(
             new AnthropicProvider(new AnthropicProviderOptions(AnthropicBaseUri)),
             new GoogleGeminiProvider(new GoogleGeminiProviderOptions(GoogleBaseUri)),
             new OpenAICompatibleProvider(new OpenAICompatibleProviderOptions(OpenAICompatibleBaseUri)),
+            new OpenAICompatibleProvider(new OpenAICompatibleProviderOptions(
+                OpenAICompatibleBaseUri,
+                ProviderId: "openai-api")),
+            new OpenAICompatibleProvider(new OpenAICompatibleProviderOptions(
+                XaiBaseUri,
+                ApiKeyEnvironment: "XAI_API_KEY",
+                ProviderId: "xai-api")),
+            new OpenAICompatibleProvider(new OpenAICompatibleProviderOptions(
+                ZaiBaseUri,
+                ApiKeyEnvironment: "ZAI_API_KEY",
+                ResponsesPath: "responses",
+                ProviderId: "zai-api")),
         };
         if (additionalProviders is not null)
         {
