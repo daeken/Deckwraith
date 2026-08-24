@@ -81,3 +81,22 @@ public sealed class McpProtocolException : Exception
     {
     }
 }
+
+public interface IMcpCrashInjector
+{
+    void Inject(string point, string operationId);
+}
+
+public sealed class McpCrashInjectionException : Exception
+{
+    public McpCrashInjectionException(string point, string operationId)
+        : base($"Simulated crash at '{point}' for operation '{operationId}'.")
+    {
+        Point = point;
+        OperationId = operationId;
+    }
+
+    public string Point { get; }
+
+    public string OperationId { get; }
+}

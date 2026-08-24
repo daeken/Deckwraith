@@ -19,6 +19,7 @@ public sealed partial class McpCatalogRuntime : IDisposable
     private readonly IAgentArchive _archive;
     private readonly ICheckpointStore _checkpoints;
     private readonly IDeckClock _clock;
+    private readonly IMcpCrashInjector? _crashInjector;
     private readonly SemaphoreSlim _configurationGate = new(1, 1);
     private readonly SemaphoreSlim _clientGate = new(1, 1);
     private readonly ConcurrentDictionary<string, ClientLease> _clients =
@@ -32,7 +33,8 @@ public sealed partial class McpCatalogRuntime : IDisposable
         IDeckStateStore deckState,
         IAgentArchive archive,
         ICheckpointStore checkpoints,
-        IDeckClock? clock = null)
+        IDeckClock? clock = null,
+        IMcpCrashInjector? crashInjector = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(rootPath);
         _rootPath = Path.GetFullPath(rootPath);
@@ -40,6 +42,7 @@ public sealed partial class McpCatalogRuntime : IDisposable
         _archive = archive;
         _checkpoints = checkpoints;
         _clock = clock ?? SystemDeckClock.Instance;
+        _crashInjector = crashInjector;
     }
 
     public async Task<string> ConfigureServersAsync(
@@ -261,6 +264,7 @@ public sealed partial class McpCatalogRuntime : IDisposable
                 context.OperationId,
                 _clock.UtcNow),
             cancellationToken).ConfigureAwait(false);
+        _crashInjector?.Inject("mcp.after-started", context.OperationId);
         try
         {
             var server = await ReadServerAsync(entry.ServerId, cancellationToken).ConfigureAwait(false);
@@ -306,7 +310,7 @@ public sealed partial class McpCatalogRuntime : IDisposable
                 CancellationToken.None).ConfigureAwait(false);
             throw;
         }
-        catch (Exception exception)
+        catch (Exception exception) when (exception is not McpCrashInjectionException)
         {
             if (exception is McpProtocolException &&
                 _clients.TryRemove(entry.ServerId, out var failedClient))

@@ -10,7 +10,9 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="../../src/Deckwraith.Continuity/Deckwraith.Continuity.csproj" />
+    <ProjectReference Include="../../src/Deckwraith.Mcp/Deckwraith.Mcp.csproj" />
     <ProjectReference Include="../../src/Deckwraith.Persistence/Deckwraith.Persistence.csproj" />
+    <ProjectReference Include="../Deckwraith.Mcp.TestServer/Deckwraith.Mcp.TestServer.csproj" />
   </ItemGroup>
   <ItemGroup>
     <Using Include="Xunit" />
