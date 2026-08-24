@@ -591,6 +591,15 @@ public sealed class InferenceRuntime : IDisposable
             }
             catch (OperationCanceledException)
             {
+                if (_events is not null)
+                {
+                    await _events.OnModelEventAsync(
+                        agent.Value,
+                        run.RunId,
+                        shell.ShellId,
+                        new ModelResponseCompleted(ModelFinishReason.Cancelled, null),
+                        CancellationToken.None).ConfigureAwait(false);
+                }
                 await _archive.AppendAsync(
                     ArchiveEventFor(run, shell, "model.cancelled", new
                     {

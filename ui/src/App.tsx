@@ -152,7 +152,7 @@ export function App() {
     const unsubscribe = subscribe(
       deck.eventCursor,
       (event) => {
-        setEvents((current) => [...current.slice(-79), event]);
+        setEvents((current) => appendHostEvent(current, event));
         if (eventChangesSnapshot(event)) scheduleEventRefresh();
       },
       refresh,
@@ -894,15 +894,20 @@ function CheckpointPanel({ checkpoints, busy, mutate }: { checkpoints: Checkpoin
 }
 
 function LiveRail({ events }: { events: HostEvent[] }) {
-  const activity = useMemo(() => events.filter((event) => ACTIVITY_EVENTS.has(event.name)), [events]);
-  const latestModelStart = lastEventCursor(events, "model.started");
-  const latestModelEnd = Math.max(lastEventCursor(events, "model.completed"), lastEventCursor(events, "model.error"));
-  const modelIsActive = latestModelStart > latestModelEnd;
-  const activeDelta = useMemo(() => modelIsActive
-    ? events.filter((event) => event.name === "model.text-delta" && event.cursor > latestModelStart)
+  const activeModels = useMemo(() => activeLifecycleStarts(
+    events, "model.started", MODEL_TERMINAL_EVENTS, modelLifecycleKey), [events]);
+  const activeKernels = useMemo(() => activeLifecycleStarts(
+    events, "kernel.started", KERNEL_TERMINAL_EVENTS, kernelLifecycleKey), [events]);
+  const activity = useMemo(() => visibleActivity(events), [events]);
+  const activeModel = activeModels.at(-1);
+  const modelIsActive = activeModels.length > 0;
+  const activeDelta = useMemo(() => activeModel
+    ? events.filter((event) => event.name === "model.text-delta" &&
+        event.cursor > activeModel.cursor &&
+        modelLifecycleKey(event) === modelLifecycleKey(activeModel))
       .map((event) => payloadString(event, "delta")).join("")
-    : "", [events, latestModelStart, modelIsActive]);
-  const kernelIsActive = lastEventCursor(events, "kernel.started") > lastEventCursor(events, "kernel.completed");
+    : "", [activeModel, events]);
+  const kernelIsActive = activeKernels.length > 0;
   const isActive = modelIsActive || kernelIsActive;
   return <aside className="live-rail"><div className="live-heading"><span className={clsx("pulse", isActive && "active")} /><div><b>Activity</b><small>{isActive ? "Work in progress" : activity.length ? "Recent work" : "Nothing running"}</small></div></div>
     {activeDelta && <div className="streaming-text" aria-live="polite">{activeDelta}</div>}
@@ -929,6 +934,8 @@ const ACTIVITY_EVENTS = new Set([
   "kernel.error",
   "kernel.completed",
 ]);
+const MODEL_TERMINAL_EVENTS = new Set(["model.completed", "model.error"]);
+const KERNEL_TERMINAL_EVENTS = new Set(["kernel.completed"]);
 
 function describeActivity(event: HostEvent): { title: string; detail: string; tone?: string } {
   const wraith = payloadString(event, "wraith");
@@ -946,7 +953,9 @@ function describeActivity(event: HostEvent): { title: string; detail: string; to
     case "model.usage":
       return { title: "Model usage", detail: `${payloadNumber(event, "inputTokens")} in · ${payloadNumber(event, "outputTokens")} out` };
     case "model.completed":
-      return { title: "Model turn finished", detail: joinDetail(subject, payloadString(event, "finishReason")) };
+      return payloadString(event, "finishReason") === "cancelled"
+        ? { title: "Model turn stopped", detail: subject || "Cancelled safely" }
+        : { title: "Model turn finished", detail: joinDetail(subject, payloadString(event, "finishReason")) };
     case "model.error":
       return { title: "Model error", detail: joinDetail(payloadString(event, "code"), payloadString(event, "message")), tone: "failed" };
     case "kernel.started":
@@ -960,11 +969,57 @@ function describeActivity(event: HostEvent): { title: string; detail: string; to
   }
 }
 
-function lastEventCursor(events: HostEvent[], name: string) {
-  for (let index = events.length - 1; index >= 0; index -= 1) {
-    if (events[index].name === name) return events[index].cursor;
+function appendHostEvent(events: HostEvent[], event: HostEvent) {
+  const next = [...events, event];
+  const recent = next.slice(-80);
+  if (recent.length === next.length) return next;
+  const firstRecentCursor = recent[0]?.cursor ?? 0;
+  const activeStarts = [
+    ...activeLifecycleStarts(next, "model.started", MODEL_TERMINAL_EVENTS, modelLifecycleKey),
+    ...activeLifecycleStarts(next, "kernel.started", KERNEL_TERMINAL_EVENTS, kernelLifecycleKey),
+  ].filter((start) => start.cursor < firstRecentCursor);
+  return [...activeStarts, ...recent].sort((left, right) => left.cursor - right.cursor);
+}
+
+function visibleActivity(events: HostEvent[]) {
+  const activeStartCursors = new Set([
+    ...activeLifecycleStarts(events, "model.started", MODEL_TERMINAL_EVENTS, modelLifecycleKey),
+    ...activeLifecycleStarts(events, "kernel.started", KERNEL_TERMINAL_EVENTS, kernelLifecycleKey),
+  ].map((event) => event.cursor));
+  return events.filter((event) => ACTIVITY_EVENTS.has(event.name) &&
+    (!event.name.endsWith(".started") || activeStartCursors.has(event.cursor)));
+}
+
+function activeLifecycleStarts(
+  events: HostEvent[],
+  startedName: string,
+  terminalNames: Set<string>,
+  keyOf: (event: HostEvent) => string,
+) {
+  const active = new Map<string, HostEvent>();
+  for (const event of events) {
+    const key = keyOf(event);
+    if (event.name === startedName) {
+      active.set(key, event);
+    } else if (terminalNames.has(event.name)) {
+      active.delete(key);
+    }
   }
-  return 0;
+  return [...active.values()].sort((left, right) => left.cursor - right.cursor);
+}
+
+function modelLifecycleKey(event: HostEvent) {
+  return payloadString(event, "shellId") ||
+    joinDetail(payloadString(event, "wraith"), payloadString(event, "runId")) ||
+    "model";
+}
+
+function kernelLifecycleKey(event: HostEvent) {
+  return payloadString(event, "executionId") || joinDetail(
+    payloadString(event, "wraith"),
+    payloadString(event, "haunt"),
+    payloadString(event, "cellName"),
+  ) || "kernel";
 }
 
 function payloadString(event: HostEvent, key: string) {

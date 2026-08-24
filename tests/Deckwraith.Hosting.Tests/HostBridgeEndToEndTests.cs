@@ -386,6 +386,56 @@ public sealed class HostBridgeEndToEndTests
         }
     }
 
+    [Fact]
+    public async Task CancelledModelTurnsPublishATerminalLifecycleEvent()
+    {
+        var rootPath = Path.Combine(
+            Path.GetTempPath(), $"deckwraith-host-cancel-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(rootPath);
+        try
+        {
+            var provider = new BlockingProvider();
+            using var host = await DeckwraithHost.OpenAsync(
+                rootPath, additionalProviders: [provider]);
+            AssertSuccess(await host.ExecuteAsync(Command(
+                "deck.initialize", new { }, "initialize-for-cancel")));
+            var started = await host.ExecuteAsync(Command(
+                "run.start",
+                new
+                {
+                    wraith = "steward",
+                    haunt = "setup",
+                    objective = "wait until stopped",
+                    provider = "blocking",
+                    model = "blocking-model",
+                },
+                "start-cancelled-run"));
+            AssertSuccess(started);
+            var runId = started.Result!.Value.GetProperty("run").GetProperty("runId").GetString();
+
+            using var cancellation = new CancellationTokenSource();
+            var turn = host.ExecuteAsync(Command(
+                "run.turn",
+                new { wraith = "steward", runId, message = "Please wait." },
+                "cancelled-turn"), cancellation.Token);
+            await provider.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            cancellation.Cancel();
+
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => turn);
+            var events = await ReadEventsThroughAsync(host, host.LatestEventCursor);
+            var terminal = Assert.Single(events, hostEvent =>
+                hostEvent.Name == "model.completed" &&
+                hostEvent.Payload.GetProperty("runId").GetString() == runId);
+            Assert.Equal(
+                "cancelled",
+                terminal.Payload.GetProperty("finishReason").GetString());
+        }
+        finally
+        {
+            Directory.Delete(rootPath, recursive: true);
+        }
+    }
+
     private static HostRequest Command(string name, object payload, string requestId) =>
         Request(HostRequestKind.Command, name, payload, requestId);
 
@@ -422,6 +472,23 @@ public sealed class HostBridgeEndToEndTests
         }
 
         return names;
+    }
+
+    private static async Task<List<HostEvent>> ReadEventsThroughAsync(
+        DeckwraithHost host,
+        long targetCursor)
+    {
+        var events = new List<HostEvent>();
+        await foreach (var hostEvent in host.ReadEventsAsync(0))
+        {
+            events.Add(hostEvent);
+            if (hostEvent.Cursor == targetCursor)
+            {
+                break;
+            }
+        }
+
+        return events;
     }
 
     private static async Task<string> RunGitAsync(
@@ -466,6 +533,26 @@ public sealed class HostBridgeEndToEndTests
             yield return new ModelTextDelta("from fake");
             yield return new ModelUsageReported(10, 3, 0);
             yield return new ModelResponseCompleted(ModelFinishReason.Stop, null);
+        }
+    }
+
+    private sealed class BlockingProvider : IModelProvider
+    {
+        public string ProviderId => "blocking";
+
+        public ProviderCapabilities Capabilities { get; } = new(
+            true, false, false, false, false);
+
+        public TaskCompletionSource<bool> Started { get; } = new(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public async IAsyncEnumerable<ModelEvent> RunAsync(
+            ModelRequest request,
+            [EnumeratorCancellation] CancellationToken cancellationToken)
+        {
+            Started.TrySetResult(true);
+            yield return new ModelResponseStarted("blocking-response");
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
         }
     }
 
