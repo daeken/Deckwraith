@@ -24,11 +24,22 @@ public sealed record ProviderAuthenticationStatus(
     ProviderAuthenticationState State,
     string Message,
     DateTimeOffset? ExpiresAt = null,
-    string? AccountLabel = null);
+    string? AccountLabel = null,
+    string? CredentialSource = null);
 
 public interface IProviderAuthenticationSource
 {
     ValueTask<ProviderAuthenticationStatus> GetAuthenticationStatusAsync(
+        CancellationToken cancellationToken = default);
+}
+
+public interface IProviderApiKeyAuthenticationSource : IProviderAuthenticationSource
+{
+    ValueTask<ProviderAuthenticationStatus> SetApiKeyAsync(
+        string apiKey,
+        CancellationToken cancellationToken = default);
+
+    ValueTask<ProviderAuthenticationStatus> DeleteStoredApiKeyAsync(
         CancellationToken cancellationToken = default);
 }
 

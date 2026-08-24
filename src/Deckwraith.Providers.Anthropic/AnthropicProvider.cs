@@ -17,21 +17,34 @@ public sealed record AnthropicProviderOptions(
         new(new Uri("https://api.anthropic.com/"));
 }
 
-public sealed class AnthropicProvider : IModelProvider
+public sealed class AnthropicProvider : IModelProvider, IProviderApiKeyAuthenticationSource
 {
     private static readonly HttpClient SharedClient = new();
     private readonly AnthropicProviderOptions _options;
     private readonly HttpClient _client;
+    private readonly ProviderApiKeyCredentialSource _credentials;
 
     public AnthropicProvider(
         AnthropicProviderOptions? options = null,
-        HttpClient? client = null)
+        HttpClient? client = null,
+        ProviderApiKeyCredentialSource? credentialSource = null)
     {
         _options = options ?? AnthropicProviderOptions.CreateDefault();
         _client = client ?? SharedClient;
         ArgumentException.ThrowIfNullOrWhiteSpace(_options.ApiKeyEnvironment);
         ArgumentException.ThrowIfNullOrWhiteSpace(_options.ApiVersion);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(_options.DefaultMaximumOutputTokens);
+        _credentials = credentialSource ?? new ProviderApiKeyCredentialSource(
+            new ProviderApiKeyCredentialOptions(
+                ProviderId,
+                "Anthropic · API key",
+                _options.ApiKeyEnvironment));
+        if (!StringComparer.Ordinal.Equals(_credentials.ProviderId, ProviderId))
+        {
+            throw new ArgumentException(
+                "The API-key credential source must belong to Anthropic.",
+                nameof(credentialSource));
+        }
     }
 
     public string ProviderId => "anthropic";
@@ -43,14 +56,32 @@ public sealed class AnthropicProvider : IModelProvider
         ReasoningControls: false,
         ConversationContinuation: false);
 
+    public ValueTask<ProviderAuthenticationStatus> GetAuthenticationStatusAsync(
+        CancellationToken cancellationToken = default) =>
+        _credentials.GetAuthenticationStatusAsync(cancellationToken);
+
+    public ValueTask<ProviderAuthenticationStatus> SetApiKeyAsync(
+        string apiKey,
+        CancellationToken cancellationToken = default) =>
+        _credentials.SetApiKeyAsync(apiKey, cancellationToken);
+
+    public ValueTask<ProviderAuthenticationStatus> DeleteStoredApiKeyAsync(
+        CancellationToken cancellationToken = default) =>
+        _credentials.DeleteStoredApiKeyAsync(cancellationToken);
+
     public async IAsyncEnumerable<ModelEvent> RunAsync(
         ModelRequest request,
         [EnumeratorCancellation] CancellationToken cancellationToken)
     {
-        if (!ProviderHttp.TryResolveCredential(
-            _options.ApiKeyEnvironment, out var apiKey, out var credentialError))
+        var credential = await _credentials.ResolveAsync(cancellationToken).ConfigureAwait(false);
+        if (credential.ApiKey is not { } apiKey)
         {
-            yield return new ModelProviderError("credential-missing", credentialError, false);
+            yield return new ModelProviderError(
+                credential.State is ProviderAuthenticationState.Error
+                    ? "credential-error"
+                    : "credential-missing",
+                credential.Message,
+                false);
             yield break;
         }
 

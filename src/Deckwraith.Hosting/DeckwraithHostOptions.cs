@@ -3,6 +3,7 @@ using Deckwraith.Credentials;
 using Deckwraith.Providers.Abstractions;
 using Deckwraith.Providers.Anthropic;
 using Deckwraith.Providers.Google;
+using Deckwraith.Providers.Http;
 using Deckwraith.Providers.OpenAI;
 using Deckwraith.Providers.OpenAICompatible;
 
@@ -36,26 +37,46 @@ public sealed record DeckwraithHostOptions(
         IEnumerable<IModelProvider>? additionalProviders = null)
     {
         var openAiSubscriptionCredentials = new OpenAiSubscriptionCredentialManager(CredentialStore);
+        ProviderApiKeyCredentialSource ApiKey(
+            string providerId,
+            string displayName,
+            string environmentVariable) => new(
+                new ProviderApiKeyCredentialOptions(
+                    providerId,
+                    displayName,
+                    environmentVariable),
+                CredentialStore);
         var providers = new List<IModelProvider>
         {
             new OpenAiSubscriptionProvider(
                 openAiSubscriptionCredentials,
                 new OpenAiSubscriptionProviderOptions(OpenAiSubscriptionBaseUri)),
-            new AnthropicProvider(new AnthropicProviderOptions(AnthropicBaseUri)),
+            new AnthropicProvider(
+                new AnthropicProviderOptions(AnthropicBaseUri),
+                credentialSource: ApiKey("anthropic", "Anthropic · API key", "ANTHROPIC_API_KEY")),
             new GoogleGeminiProvider(new GoogleGeminiProviderOptions(GoogleBaseUri)),
             new OpenAICompatibleProvider(new OpenAICompatibleProviderOptions(OpenAICompatibleBaseUri)),
-            new OpenAICompatibleProvider(new OpenAICompatibleProviderOptions(
-                OpenAICompatibleBaseUri,
-                ProviderId: "openai-api")),
-            new OpenAICompatibleProvider(new OpenAICompatibleProviderOptions(
-                XaiBaseUri,
-                ApiKeyEnvironment: "XAI_API_KEY",
-                ProviderId: "xai-api")),
-            new OpenAICompatibleProvider(new OpenAICompatibleProviderOptions(
-                ZaiBaseUri,
-                ApiKeyEnvironment: "ZAI_API_KEY",
-                ResponsesPath: "responses",
-                ProviderId: "zai-api")),
+            new OpenAICompatibleProvider(
+                new OpenAICompatibleProviderOptions(
+                    OpenAICompatibleBaseUri,
+                    ProviderId: "openai-api",
+                    DisplayName: "OpenAI · API key"),
+                credentialSource: ApiKey("openai-api", "OpenAI · API key", "OPENAI_API_KEY")),
+            new OpenAICompatibleProvider(
+                new OpenAICompatibleProviderOptions(
+                    XaiBaseUri,
+                    ApiKeyEnvironment: "XAI_API_KEY",
+                    ProviderId: "xai-api",
+                    DisplayName: "xAI · API key"),
+                credentialSource: ApiKey("xai-api", "xAI · API key", "XAI_API_KEY")),
+            new OpenAICompatibleProvider(
+                new OpenAICompatibleProviderOptions(
+                    ZaiBaseUri,
+                    ApiKeyEnvironment: "ZAI_API_KEY",
+                    ResponsesPath: "responses",
+                    ProviderId: "zai-api",
+                    DisplayName: "Z.AI · API key"),
+                credentialSource: ApiKey("zai-api", "Z.AI · API key", "ZAI_API_KEY")),
         };
         if (additionalProviders is not null)
         {

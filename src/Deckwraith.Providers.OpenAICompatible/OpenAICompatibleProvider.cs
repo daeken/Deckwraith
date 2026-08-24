@@ -12,27 +12,42 @@ public sealed record OpenAICompatibleProviderOptions(
     string ApiKeyEnvironment = "OPENAI_API_KEY",
     string ResponsesPath = "v1/responses",
     IReadOnlyDictionary<string, string>? Headers = null,
-    string ProviderId = "openai-compatible")
+    string ProviderId = "openai-compatible",
+    string DisplayName = "OpenAI-compatible · API key")
 {
     public static OpenAICompatibleProviderOptions CreateDefault() =>
         new(new Uri("https://api.openai.com/"));
 }
 
-public sealed class OpenAICompatibleProvider : IModelProvider
+public sealed class OpenAICompatibleProvider : IModelProvider, IProviderApiKeyAuthenticationSource
 {
     private static readonly HttpClient SharedClient = new();
     private readonly OpenAICompatibleProviderOptions _options;
     private readonly HttpClient _client;
+    private readonly ProviderApiKeyCredentialSource _credentials;
 
     public OpenAICompatibleProvider(
         OpenAICompatibleProviderOptions? options = null,
-        HttpClient? client = null)
+        HttpClient? client = null,
+        ProviderApiKeyCredentialSource? credentialSource = null)
     {
         _options = options ?? OpenAICompatibleProviderOptions.CreateDefault();
         _client = client ?? SharedClient;
         ArgumentException.ThrowIfNullOrWhiteSpace(_options.ProviderId);
         ArgumentException.ThrowIfNullOrWhiteSpace(_options.ApiKeyEnvironment);
         ArgumentException.ThrowIfNullOrWhiteSpace(_options.ResponsesPath);
+        ArgumentException.ThrowIfNullOrWhiteSpace(_options.DisplayName);
+        _credentials = credentialSource ?? new ProviderApiKeyCredentialSource(
+            new ProviderApiKeyCredentialOptions(
+                _options.ProviderId,
+                _options.DisplayName,
+                _options.ApiKeyEnvironment));
+        if (!StringComparer.Ordinal.Equals(_credentials.ProviderId, _options.ProviderId))
+        {
+            throw new ArgumentException(
+                "The API-key credential source must belong to this provider.",
+                nameof(credentialSource));
+        }
     }
 
     public string ProviderId => _options.ProviderId;
@@ -44,14 +59,32 @@ public sealed class OpenAICompatibleProvider : IModelProvider
         ReasoningControls: true,
         ConversationContinuation: false);
 
+    public ValueTask<ProviderAuthenticationStatus> GetAuthenticationStatusAsync(
+        CancellationToken cancellationToken = default) =>
+        _credentials.GetAuthenticationStatusAsync(cancellationToken);
+
+    public ValueTask<ProviderAuthenticationStatus> SetApiKeyAsync(
+        string apiKey,
+        CancellationToken cancellationToken = default) =>
+        _credentials.SetApiKeyAsync(apiKey, cancellationToken);
+
+    public ValueTask<ProviderAuthenticationStatus> DeleteStoredApiKeyAsync(
+        CancellationToken cancellationToken = default) =>
+        _credentials.DeleteStoredApiKeyAsync(cancellationToken);
+
     public async IAsyncEnumerable<ModelEvent> RunAsync(
         ModelRequest request,
         [EnumeratorCancellation] CancellationToken cancellationToken)
     {
-        if (!ProviderHttp.TryResolveCredential(
-            _options.ApiKeyEnvironment, out var apiKey, out var credentialError))
+        var credential = await _credentials.ResolveAsync(cancellationToken).ConfigureAwait(false);
+        if (credential.ApiKey is not { } apiKey)
         {
-            yield return new ModelProviderError("credential-missing", credentialError, false);
+            yield return new ModelProviderError(
+                credential.State is ProviderAuthenticationState.Error
+                    ? "credential-error"
+                    : "credential-missing",
+                credential.Message,
+                false);
             yield break;
         }
 

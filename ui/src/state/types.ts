@@ -20,6 +20,7 @@ export type ProviderAuthenticationStatus = {
   message: string;
   expiresAt: string | null;
   accountLabel: string | null;
+  credentialSource: string | null;
 };
 
 export type WraithDocument = {

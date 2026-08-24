@@ -29,6 +29,51 @@ public sealed class HostBridgeEndToEndTests
     }
 
     [Fact]
+    public async Task ApiKeysStayOutsideDeckSnapshotsResponsesAndEvents()
+    {
+        const string secret = "deckwraith-host-secret-that-must-stay-opaque";
+        var rootPath = Path.Combine(
+            Path.GetTempPath(), $"deckwraith-host-api-key-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(rootPath);
+        try
+        {
+            var credentials = new RecordingCredentialStore();
+            var options = DeckwraithHostOptions.CreateDefault() with
+            {
+                CredentialStore = credentials,
+            };
+            using var host = await DeckwraithHost.OpenAsync(rootPath, options);
+            AssertSuccess(await host.ExecuteAsync(Command(
+                "deck.initialize", new { }, "initialize-for-api-key")));
+            var cursorBeforeCredentialWrite = host.LatestEventCursor;
+
+            var status = await host.SetProviderApiKeyAsync("openai-api", secret);
+            Assert.Equal(cursorBeforeCredentialWrite, host.LatestEventCursor);
+            var snapshots = await host.ReadProviderSnapshotsAsync();
+            var deck = await host.ExecuteAsync(Query(
+                "deck.snapshot", new { }, "snapshot-after-api-key"));
+
+            Assert.Equal(ProviderAuthenticationState.Ready, status.State);
+            Assert.Equal("provider.openai-api.api-key", credentials.LastCredentialId);
+            Assert.Equal(secret, credentials.LastPayload);
+            Assert.DoesNotContain(secret, JsonSerializer.Serialize(status), StringComparison.Ordinal);
+            Assert.DoesNotContain(secret, JsonSerializer.Serialize(snapshots), StringComparison.Ordinal);
+            Assert.DoesNotContain(secret, deck.Result!.Value.GetRawText(), StringComparison.Ordinal);
+            foreach (var path in Directory.EnumerateFiles(rootPath, "*", SearchOption.AllDirectories))
+            {
+                Assert.DoesNotContain(
+                    secret,
+                    System.Text.Encoding.UTF8.GetString(await File.ReadAllBytesAsync(path)),
+                    StringComparison.Ordinal);
+            }
+        }
+        finally
+        {
+            Directory.Delete(rootPath, recursive: true);
+        }
+    }
+
+    [Fact]
     public async Task TypedBridgeOwnsLifecycleEventsReconnectAndIdentity()
     {
         var rootPath = Path.Combine(
@@ -349,5 +394,41 @@ public sealed class HostBridgeEndToEndTests
             string credentialId,
             CancellationToken cancellationToken = default) =>
             ValueTask.CompletedTask;
+    }
+
+    private sealed class RecordingCredentialStore : IProviderCredentialStore
+    {
+        private readonly Dictionary<string, string> _credentials = new(StringComparer.Ordinal);
+
+        public string StorageKind => "test";
+
+        public string? LastCredentialId { get; private set; }
+
+        public string? LastPayload { get; private set; }
+
+        public ValueTask<string?> ReadAsync(
+            string credentialId,
+            CancellationToken cancellationToken = default) =>
+            ValueTask.FromResult(
+                _credentials.TryGetValue(credentialId, out var payload) ? payload : null);
+
+        public ValueTask WriteAsync(
+            string credentialId,
+            string payload,
+            CancellationToken cancellationToken = default)
+        {
+            LastCredentialId = credentialId;
+            LastPayload = payload;
+            _credentials[credentialId] = payload;
+            return ValueTask.CompletedTask;
+        }
+
+        public ValueTask DeleteAsync(
+            string credentialId,
+            CancellationToken cancellationToken = default)
+        {
+            _credentials.Remove(credentialId);
+            return ValueTask.CompletedTask;
+        }
     }
 }

@@ -7,12 +7,14 @@ import {
   assertProtocolCompatible,
   BridgeError,
   command,
+  deleteStoredProviderApiKey,
   disconnectOpenAiSession,
   importExistingOpenAiSession,
   pickDeckFolder,
   pickProjectFolder,
   query,
   selectDeckPath,
+  setProviderApiKey,
   signInOpenAiSession,
   setThemePreference,
   subscribe,
@@ -316,6 +318,32 @@ export function App() {
             setError("");
             try {
               await disconnectOpenAiSession();
+              await refresh();
+            } catch (reason) {
+              setError(messageOf(reason));
+              throw reason;
+            } finally {
+              setBusy(false);
+            }
+          }}
+          onSetApiKey={async (providerId, apiKey) => {
+            setBusy(true);
+            setError("");
+            try {
+              await setProviderApiKey(providerId, apiKey);
+              await refresh();
+            } catch (reason) {
+              setError(messageOf(reason));
+              throw reason;
+            } finally {
+              setBusy(false);
+            }
+          }}
+          onDeleteApiKey={async (providerId) => {
+            setBusy(true);
+            setError("");
+            try {
+              await deleteStoredProviderApiKey(providerId);
               await refresh();
             } catch (reason) {
               setError(messageOf(reason));
@@ -910,19 +938,35 @@ function ThemeDialog({ theme, tokens, busy, onSave }: {
   </Dialog.Root>;
 }
 
-function ProviderDialog({ providers, busy, onSignIn, onImport, onDisconnect }: {
+const API_PROVIDER_CARDS = [
+  { providerId: "openai-api", name: "OpenAI", environment: "OPENAI_API_KEY" },
+  { providerId: "anthropic", name: "Anthropic", environment: "ANTHROPIC_API_KEY" },
+  { providerId: "xai-api", name: "xAI", environment: "XAI_API_KEY" },
+  { providerId: "zai-api", name: "Z.AI", environment: "ZAI_API_KEY" },
+] as const;
+
+function ProviderDialog({ providers, busy, onSignIn, onImport, onDisconnect, onSetApiKey, onDeleteApiKey }: {
   providers: ProviderSnapshot[];
   busy: boolean;
   onSignIn: () => Promise<void>;
   onImport: () => Promise<void>;
   onDisconnect: () => Promise<void>;
+  onSetApiKey: (providerId: string, apiKey: string) => Promise<void>;
+  onDeleteApiKey: (providerId: string) => Promise<void>;
 }) {
   const [open, setOpen] = useState(false);
   const [localError, setLocalError] = useState("");
   const provider = providers.find((item) => item.providerId === "openai-codex-subscription");
   const authentication = provider?.authentication;
   const state = authentication?.state ?? "missing";
-  const connected = state !== "missing";
+  const connected = ["ready", "expiring", "expired", "refreshing", "rejected"].includes(state);
+  const managedIds = new Set([
+    "openai-codex-subscription",
+    ...API_PROVIDER_CARDS.map((item) => item.providerId),
+  ]);
+  const managed = providers.filter((item) => managedIds.has(item.providerId));
+  const readyCount = managed.filter((item) =>
+    item.authentication?.state === "ready" || item.authentication?.state === "expiring").length;
   useEffect(() => {
     if (!open) setLocalError("");
   }, [open]);
@@ -930,14 +974,17 @@ function ProviderDialog({ providers, busy, onSignIn, onImport, onDisconnect }: {
   return <Dialog.Root open={open} onOpenChange={setOpen}>
     <Dialog.Trigger asChild>
       <button className="quiet provider-settings-button">
-        <span>Provider access</span><small className={clsx("provider-state", state)}>{providerStateLabel(state)}</small>
+        <span>Provider access</span>
+        <small className={clsx("provider-state", readyCount === managedIds.size && "ready")}>
+          {readyCount}/{managedIds.size} ready
+        </small>
       </button>
     </Dialog.Trigger>
     <Dialog.Portal>
       <Dialog.Overlay className="dialog-overlay" />
       <Dialog.Content className="dialog-content provider-dialog">
         <Dialog.Title>Provider access</Dialog.Title>
-        <Dialog.Description>Connections belong to this installation, outside the deck and its Git history.</Dialog.Description>
+        <Dialog.Description>Connections belong to this installation, outside every deck, snapshot, and Git history.</Dialog.Description>
         <div className="provider-card">
           <div className="provider-card-heading">
             <div><b>OpenAI</b><span>ChatGPT subscription</span></div>
@@ -961,11 +1008,73 @@ function ProviderDialog({ providers, busy, onSignIn, onImport, onDisconnect }: {
             }}>Disconnect</button>}
           </div>
         </div>
+        <div className="provider-section-heading">
+          <b>API access</b>
+          <span>Stored keys take precedence over process environment variables.</span>
+        </div>
+        <div className="provider-api-grid">
+          {API_PROVIDER_CARDS.map((configuration) => <ApiKeyProviderCard
+            key={configuration.providerId}
+            configuration={configuration}
+            provider={providers.find((item) => item.providerId === configuration.providerId)}
+            busy={busy}
+            onSave={onSetApiKey}
+            onDelete={onDeleteApiKey}
+          />)}
+        </div>
         {localError && <div className="setup-error"><b>That didn’t work.</b> {localError}</div>}
         <div className="action-row"><Dialog.Close asChild><button disabled={busy}>Done</button></Dialog.Close></div>
       </Dialog.Content>
     </Dialog.Portal>
   </Dialog.Root>;
+}
+
+function ApiKeyProviderCard({ configuration, provider, busy, onSave, onDelete }: {
+  configuration: typeof API_PROVIDER_CARDS[number];
+  provider: ProviderSnapshot | undefined;
+  busy: boolean;
+  onSave: (providerId: string, apiKey: string) => Promise<void>;
+  onDelete: (providerId: string) => Promise<void>;
+}) {
+  const [apiKey, setApiKey] = useState("");
+  const [localError, setLocalError] = useState("");
+  const authentication = provider?.authentication;
+  const state = authentication?.state ?? "missing";
+  const stored = !!authentication?.credentialSource &&
+    authentication.credentialSource !== configuration.environment;
+  return <div className="provider-card api-provider-card">
+    <div className="provider-card-heading">
+      <div><b>{configuration.name}</b><span>API key</span></div>
+      <StatusPill value={state} />
+    </div>
+    <p>{authentication?.message ?? "Add an API key to use this provider."}</p>
+    {authentication?.credentialSource && <small>Source: {authentication.credentialSource}</small>}
+    <label className="api-key-entry">
+      <span>{stored ? "Replace stored key" : "Store an API key"}</span>
+      <input
+        type="password"
+        value={apiKey}
+        autoComplete="off"
+        spellCheck={false}
+        placeholder="Paste key"
+        onChange={(event) => setApiKey(event.target.value)}
+      />
+    </label>
+    <div className="button-cluster">
+      <button className="primary" disabled={busy || !apiKey.trim()} onClick={() => {
+        setLocalError("");
+        void onSave(configuration.providerId, apiKey.trim())
+          .then(() => setApiKey(""))
+          .catch((reason: unknown) => setLocalError(messageOf(reason)));
+      }}>{stored ? "Replace key" : "Store key"}</button>
+      {stored && <button className="danger" disabled={busy} onClick={() => {
+        setLocalError("");
+        void onDelete(configuration.providerId)
+          .catch((reason: unknown) => setLocalError(messageOf(reason)));
+      }}>Remove stored key</button>}
+    </div>
+    {localError && <div className="setup-error"><b>That didn’t work.</b> {localError}</div>}
+  </div>;
 }
 
 function DeckOnboarding({ path, busy, error, onPathChange, onChooseFolder, onInitialize }: {

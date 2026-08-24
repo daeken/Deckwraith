@@ -143,6 +143,38 @@ app.MapPost("/api/v1/providers/openai-subscription/disconnect", async (
     }
 });
 
+app.MapPut("/api/v1/providers/{providerId}/api-key", async (
+    string providerId,
+    ProviderApiKeyRequest request,
+    CancellationToken cancellationToken) =>
+{
+    var status = await session.SetProviderApiKeyAsync(
+        providerId,
+        request.ApiKey ?? string.Empty,
+        cancellationToken).ConfigureAwait(false);
+    return Results.Json(
+        status,
+        ProtocolJson.Options,
+        statusCode: status.State is Deckwraith.Providers.Abstractions.ProviderAuthenticationState.Error
+            ? StatusCodes.Status400BadRequest
+            : StatusCodes.Status200OK);
+});
+
+app.MapDelete("/api/v1/providers/{providerId}/api-key", async (
+    string providerId,
+    CancellationToken cancellationToken) =>
+{
+    var status = await session.DeleteStoredProviderApiKeyAsync(
+        providerId,
+        cancellationToken).ConfigureAwait(false);
+    return Results.Json(
+        status,
+        ProtocolJson.Options,
+        statusCode: status.State is Deckwraith.Providers.Abstractions.ProviderAuthenticationState.Error
+            ? StatusCodes.Status400BadRequest
+            : StatusCodes.Status200OK);
+});
+
 app.MapPost("/api/v1/deck/pick", async (DeckPickerRequest request) =>
 {
     if (!HybridSupport.IsElectronActive || mainWindow is null)
@@ -399,6 +431,8 @@ internal sealed record ThemePreferenceRequest(
 
 internal sealed record ProviderImportRequest(string? Path);
 
+internal sealed record ProviderApiKeyRequest(string? ApiKey);
+
 internal sealed record DeckSelectionResult(string DeckPath, bool Initialized);
 
 internal sealed class DesktopDeckException(string code, string message) : Exception(message)
@@ -556,6 +590,45 @@ internal sealed class DesktopDeckSession : IDisposable
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
             await _runtime.DisconnectOpenAiSubscriptionAsync(cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    public async ValueTask<Deckwraith.Providers.Abstractions.ProviderAuthenticationStatus>
+        SetProviderApiKeyAsync(
+            string providerId,
+            string apiKey,
+            CancellationToken cancellationToken = default)
+    {
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            return await _runtime.SetProviderApiKeyAsync(
+                providerId,
+                apiKey,
+                cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    public async ValueTask<Deckwraith.Providers.Abstractions.ProviderAuthenticationStatus>
+        DeleteStoredProviderApiKeyAsync(
+            string providerId,
+            CancellationToken cancellationToken = default)
+    {
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            return await _runtime.DeleteStoredProviderApiKeyAsync(providerId, cancellationToken)
+                .ConfigureAwait(false);
         }
         finally
         {

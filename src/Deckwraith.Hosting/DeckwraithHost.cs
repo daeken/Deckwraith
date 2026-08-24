@@ -289,6 +289,17 @@ public sealed class DeckwraithHost : IDisposable
         CancellationToken cancellationToken = default) =>
         GetOpenAiSubscriptionProvider().DisconnectAsync(cancellationToken);
 
+    public ValueTask<ProviderAuthenticationStatus> SetProviderApiKeyAsync(
+        string providerId,
+        string apiKey,
+        CancellationToken cancellationToken = default) =>
+        GetApiKeyProvider(providerId).SetApiKeyAsync(apiKey, cancellationToken);
+
+    public ValueTask<ProviderAuthenticationStatus> DeleteStoredProviderApiKeyAsync(
+        string providerId,
+        CancellationToken cancellationToken = default) =>
+        GetApiKeyProvider(providerId).DeleteStoredApiKeyAsync(cancellationToken);
+
     public Task<HostResponse> ExecuteAsync(
         HostRequest request,
         CancellationToken cancellationToken = default)
@@ -640,6 +651,27 @@ public sealed class DeckwraithHost : IDisposable
         _providers.GetProvider(OpenAiSubscriptionProvider.Id) as OpenAiSubscriptionProvider ??
         throw new HostProtocolException(
             "provider-unavailable", "OpenAI subscription access is not configured in this host.");
+
+    private IProviderApiKeyAuthenticationSource GetApiKeyProvider(string providerId)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(providerId);
+        IModelProvider provider;
+        try
+        {
+            provider = _providers.GetProvider(providerId);
+        }
+        catch (KeyNotFoundException)
+        {
+            throw new HostProtocolException(
+                "provider-unavailable",
+                $"Provider '{providerId}' is not configured in this host.");
+        }
+
+        return provider as IProviderApiKeyAuthenticationSource ??
+            throw new HostProtocolException(
+                "provider-access-unsupported",
+                $"Provider '{providerId}' does not accept a stored API key.");
+    }
 
     private async Task<WraithSnapshot> ReadWraithSnapshotAsync(
         JsonElement payload,

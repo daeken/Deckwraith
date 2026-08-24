@@ -153,6 +153,41 @@ export async function disconnectOpenAiSession(): Promise<ProviderSnapshot[]> {
   return result;
 }
 
+export async function setProviderApiKey(
+  providerId: string,
+  apiKey: string,
+): Promise<ProviderAuthenticationStatus> {
+  const response = await fetch(`/api/v1/providers/${encodeURIComponent(providerId)}/api-key`, {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ apiKey }),
+  });
+  const result = (await response.json()) as ProviderAuthenticationStatus & {
+    code?: string;
+    message?: string;
+  };
+  if (!response.ok) {
+    throw new BridgeError(result.code ?? "credential-store", result.message ?? response.statusText);
+  }
+  return result;
+}
+
+export async function deleteStoredProviderApiKey(
+  providerId: string,
+): Promise<ProviderAuthenticationStatus> {
+  const response = await fetch(`/api/v1/providers/${encodeURIComponent(providerId)}/api-key`, {
+    method: "DELETE",
+  });
+  const result = (await response.json()) as ProviderAuthenticationStatus & {
+    code?: string;
+    message?: string;
+  };
+  if (!response.ok) {
+    throw new BridgeError(result.code ?? "credential-store", result.message ?? response.statusText);
+  }
+  return result;
+}
+
 export async function request<T>(
   kind: RequestKind,
   name: string,
