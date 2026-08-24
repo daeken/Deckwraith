@@ -3,6 +3,7 @@
     <Project Path="src/Deckwraith.Application/Deckwraith.Application.csproj" />
     <Project Path="src/Deckwraith.Continuity/Deckwraith.Continuity.csproj" />
     <Project Path="src/Deckwraith.Core/Deckwraith.Core.csproj" />
+    <Project Path="src/Deckwraith.Credentials/Deckwraith.Credentials.csproj" />
     <Project Path="src/Deckwraith.Desktop/Deckwraith.Desktop.csproj" />
     <Project Path="src/Deckwraith.Headless/Deckwraith.Headless.csproj" />
     <Project Path="src/Deckwraith.Hosting/Deckwraith.Hosting.csproj" />
@@ -23,6 +24,7 @@
   <Folder Name="/tests/">
     <Project Path="tests/Deckwraith.Continuity.Tests/Deckwraith.Continuity.Tests.csproj" />
     <Project Path="tests/Deckwraith.Core.Tests/Deckwraith.Core.Tests.csproj" />
+    <Project Path="tests/Deckwraith.Credentials.Tests/Deckwraith.Credentials.Tests.csproj" />
     <Project Path="tests/Deckwraith.IntegrationTests/Deckwraith.IntegrationTests.csproj" />
     <Project Path="tests/Deckwraith.Hosting.Tests/Deckwraith.Hosting.Tests.csproj" />
     <Project Path="tests/Deckwraith.Kernels.ContractTests/Deckwraith.Kernels.ContractTests.csproj" />
