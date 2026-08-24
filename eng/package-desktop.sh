@@ -17,8 +17,13 @@ fi
 dotnet tool restore --tool-manifest "$deckwraith_repo/.config/dotnet-tools.json"
 (
   cd "$deckwraith_repo/src/Deckwraith.Desktop"
-  dotnet tool run electronize --allow-roll-forward -- build \
+  deckwraith_electron_args=(--allow-roll-forward -- build \
     /target "$deckwraith_target" \
     /Version "$deckwraith_version" \
-    /package-json electron.package.json
+    /package-json electron.package.json)
+  if [[ "$deckwraith_target" == "win" && "$(uname -s)" =~ ^(MINGW|MSYS|CYGWIN) ]]; then
+    MSYS2_ARG_CONV_EXCL='*' dotnet tool run electronize "${deckwraith_electron_args[@]}"
+  else
+    dotnet tool run electronize "${deckwraith_electron_args[@]}"
+  fi
 )
