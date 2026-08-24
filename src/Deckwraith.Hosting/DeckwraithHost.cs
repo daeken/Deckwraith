@@ -644,7 +644,10 @@ public sealed class DeckwraithHost : IDisposable
         new(
             await _state.ListWraithsAsync(cancellationToken).ConfigureAwait(false),
             await _state.ListHauntsAsync(cancellationToken).ConfigureAwait(false),
-            await ReadProviderSnapshotsAsync(cancellationToken).ConfigureAwait(false),
+            _providers.Providers.Select(provider => new ProviderSnapshot(
+                provider.ProviderId,
+                provider.Capabilities,
+                Authentication: null)).ToArray(),
             _events.LatestCursor);
 
     private OpenAiSubscriptionProvider GetOpenAiSubscriptionProvider() =>

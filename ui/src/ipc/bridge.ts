@@ -9,7 +9,6 @@ export type HostStatus = {
   deckPath: string;
   theme: ThemePreference["theme"];
   themeTokens: Record<string, string>;
-  providers: ProviderSnapshot[];
 };
 
 export type ThemePreference = {
@@ -149,6 +148,18 @@ export async function disconnectOpenAiSession(): Promise<ProviderSnapshot[]> {
   const result = (await response.json()) as ProviderSnapshot[] & { code?: string; message?: string };
   if (!response.ok) {
     throw new BridgeError(result.code ?? "transport", result.message ?? response.statusText);
+  }
+  return result;
+}
+
+export async function readProviderSnapshots(): Promise<ProviderSnapshot[]> {
+  const response = await fetch("/api/v1/providers", { cache: "no-store" });
+  const result = (await response.json()) as ProviderSnapshot[] & {
+    code?: string;
+    message?: string;
+  };
+  if (!response.ok) {
+    throw new BridgeError(result.code ?? "transport", result.message ?? response.statusText, true);
   }
   return result;
 }

@@ -50,12 +50,14 @@ public sealed class HostBridgeEndToEndTests
             var status = await host.SetProviderApiKeyAsync("openai-api", secret);
             Assert.Equal(cursorBeforeCredentialWrite, host.LatestEventCursor);
             var snapshots = await host.ReadProviderSnapshotsAsync();
+            var readsBeforeDeckSnapshot = credentials.ReadCount;
             var deck = await host.ExecuteAsync(Query(
                 "deck.snapshot", new { }, "snapshot-after-api-key"));
 
             Assert.Equal(ProviderAuthenticationState.Ready, status.State);
             Assert.Equal("provider.openai-api.api-key", credentials.LastCredentialId);
             Assert.Equal(secret, credentials.LastPayload);
+            Assert.Equal(readsBeforeDeckSnapshot, credentials.ReadCount);
             Assert.DoesNotContain(secret, JsonSerializer.Serialize(status), StringComparison.Ordinal);
             Assert.DoesNotContain(secret, JsonSerializer.Serialize(snapshots), StringComparison.Ordinal);
             Assert.DoesNotContain(secret, deck.Result!.Value.GetRawText(), StringComparison.Ordinal);
@@ -406,11 +408,16 @@ public sealed class HostBridgeEndToEndTests
 
         public string? LastPayload { get; private set; }
 
+        public int ReadCount { get; private set; }
+
         public ValueTask<string?> ReadAsync(
             string credentialId,
-            CancellationToken cancellationToken = default) =>
-            ValueTask.FromResult(
+            CancellationToken cancellationToken = default)
+        {
+            ReadCount++;
+            return ValueTask.FromResult(
                 _credentials.TryGetValue(credentialId, out var payload) ? payload : null);
+        }
 
         public ValueTask WriteAsync(
             string credentialId,

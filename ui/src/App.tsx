@@ -13,6 +13,7 @@ import {
   pickDeckFolder,
   pickProjectFolder,
   query,
+  readProviderSnapshots,
   selectDeckPath,
   setProviderApiKey,
   signInOpenAiSession,
@@ -29,6 +30,7 @@ import type {
   HauntProjectPolicy,
   HostEvent,
   IdentityDocument,
+  ProviderAuthenticationStatus,
   ProviderSnapshot,
   RunDocument,
   WraithSnapshot,
@@ -50,6 +52,7 @@ export function App() {
   const [deckPathDraft, setDeckPathDraft] = useState("");
   const [theme, setTheme] = useState<ThemePreference["theme"]>("system");
   const [themeTokens, setThemeTokens] = useState<Record<string, string>>({});
+  const [providerAccess, setProviderAccess] = useState<ProviderSnapshot[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
@@ -58,6 +61,11 @@ export function App() {
       const nextDeck = await query<DeckSnapshot>("deck.snapshot");
       setInitialized(true);
       setDeck(nextDeck);
+      setProviderAccess((current) => nextDeck.providers.map((provider) => ({
+        ...provider,
+        authentication: current.find((item) => item.providerId === provider.providerId)
+          ?.authentication ?? null,
+      })));
       const activeWraiths = nextDeck.wraiths.filter((item) => !item.archivedAt);
       const nextWraith = selectedWraith && activeWraiths.some((item) => item.name === selectedWraith)
         ? selectedWraith
@@ -105,6 +113,13 @@ export function App() {
       }
     }
   }, [selectedHaunt, selectedWraith]);
+
+  const updateProviderAuthentication = useCallback((authentication: ProviderAuthenticationStatus) => {
+    setProviderAccess((current) => current.map((provider) =>
+      provider.providerId === authentication.providerId
+        ? { ...provider, authentication }
+        : provider));
+  }, []);
 
   useEffect(() => {
     void assertProtocolCompatible().then((status) => {
@@ -285,14 +300,16 @@ export function App() {
           }}
         />
         <ProviderDialog
-          providers={deck?.providers ?? []}
+          providers={providerAccess}
           busy={busy}
+          onRefresh={async () => {
+            setProviderAccess(await readProviderSnapshots());
+          }}
           onSignIn={async () => {
             setBusy(true);
             setError("");
             try {
-              await signInOpenAiSession();
-              await refresh();
+              updateProviderAuthentication(await signInOpenAiSession());
             } catch (reason) {
               setError(messageOf(reason));
               throw reason;
@@ -304,8 +321,7 @@ export function App() {
             setBusy(true);
             setError("");
             try {
-              await importExistingOpenAiSession();
-              await refresh();
+              updateProviderAuthentication(await importExistingOpenAiSession());
             } catch (reason) {
               setError(messageOf(reason));
               throw reason;
@@ -317,8 +333,7 @@ export function App() {
             setBusy(true);
             setError("");
             try {
-              await disconnectOpenAiSession();
-              await refresh();
+              setProviderAccess(await disconnectOpenAiSession());
             } catch (reason) {
               setError(messageOf(reason));
               throw reason;
@@ -330,8 +345,7 @@ export function App() {
             setBusy(true);
             setError("");
             try {
-              await setProviderApiKey(providerId, apiKey);
-              await refresh();
+              updateProviderAuthentication(await setProviderApiKey(providerId, apiKey));
             } catch (reason) {
               setError(messageOf(reason));
               throw reason;
@@ -343,8 +357,7 @@ export function App() {
             setBusy(true);
             setError("");
             try {
-              await deleteStoredProviderApiKey(providerId);
-              await refresh();
+              updateProviderAuthentication(await deleteStoredProviderApiKey(providerId));
             } catch (reason) {
               setError(messageOf(reason));
               throw reason;
@@ -945,9 +958,10 @@ const API_PROVIDER_CARDS = [
   { providerId: "zai-api", name: "Z.AI", environment: "ZAI_API_KEY" },
 ] as const;
 
-function ProviderDialog({ providers, busy, onSignIn, onImport, onDisconnect, onSetApiKey, onDeleteApiKey }: {
+function ProviderDialog({ providers, busy, onRefresh, onSignIn, onImport, onDisconnect, onSetApiKey, onDeleteApiKey }: {
   providers: ProviderSnapshot[];
   busy: boolean;
+  onRefresh: () => Promise<void>;
   onSignIn: () => Promise<void>;
   onImport: () => Promise<void>;
   onDisconnect: () => Promise<void>;
@@ -955,6 +969,7 @@ function ProviderDialog({ providers, busy, onSignIn, onImport, onDisconnect, onS
   onDeleteApiKey: (providerId: string) => Promise<void>;
 }) {
   const [open, setOpen] = useState(false);
+  const [loading, setLoading] = useState(false);
   const [localError, setLocalError] = useState("");
   const provider = providers.find((item) => item.providerId === "openai-codex-subscription");
   const authentication = provider?.authentication;
@@ -971,7 +986,16 @@ function ProviderDialog({ providers, busy, onSignIn, onImport, onDisconnect, onS
     if (!open) setLocalError("");
   }, [open]);
 
-  return <Dialog.Root open={open} onOpenChange={setOpen}>
+  return <Dialog.Root open={open} onOpenChange={(nextOpen) => {
+    setOpen(nextOpen);
+    if (nextOpen) {
+      setLoading(true);
+      setLocalError("");
+      void onRefresh()
+        .catch((reason: unknown) => setLocalError(messageOf(reason)))
+        .finally(() => setLoading(false));
+    }
+  }}>
     <Dialog.Trigger asChild>
       <button className="quiet provider-settings-button">
         <span>Provider access</span>
@@ -985,6 +1009,7 @@ function ProviderDialog({ providers, busy, onSignIn, onImport, onDisconnect, onS
       <Dialog.Content className="dialog-content provider-dialog">
         <Dialog.Title>Provider access</Dialog.Title>
         <Dialog.Description>Connections belong to this installation, outside every deck, snapshot, and Git history.</Dialog.Description>
+        {loading && <div className="provider-loading">Checking installation credentials…</div>}
         <div className="provider-card">
           <div className="provider-card-heading">
             <div><b>OpenAI</b><span>ChatGPT subscription</span></div>
@@ -997,13 +1022,13 @@ function ProviderDialog({ providers, busy, onSignIn, onImport, onDisconnect, onS
             Deckwraith opens OpenAI in your browser, receives the private callback on localhost, and keeps the resulting session in the Mac Keychain. Inference does not start Codex or a local proxy.
           </div>
           <div className="button-cluster">
-            <button className="primary" disabled={busy} onClick={() => {
+            <button className="primary" disabled={busy || loading} onClick={() => {
               void onSignIn().catch((reason: unknown) => setLocalError(messageOf(reason)));
             }}>{connected ? "Connect a different ChatGPT account" : "Connect with ChatGPT"}</button>
-            <button className="quiet" disabled={busy} onClick={() => {
+            <button className="quiet" disabled={busy || loading} onClick={() => {
               void onImport().catch((reason: unknown) => setLocalError(messageOf(reason)));
             }}>Import an existing Codex sign-in</button>
-            {connected && <button className="danger" disabled={busy} onClick={() => {
+            {connected && <button className="danger" disabled={busy || loading} onClick={() => {
               void onDisconnect().catch((reason: unknown) => setLocalError(messageOf(reason)));
             }}>Disconnect</button>}
           </div>
@@ -1017,7 +1042,7 @@ function ProviderDialog({ providers, busy, onSignIn, onImport, onDisconnect, onS
             key={configuration.providerId}
             configuration={configuration}
             provider={providers.find((item) => item.providerId === configuration.providerId)}
-            busy={busy}
+            busy={busy || loading}
             onSave={onSetApiKey}
             onDelete={onDeleteApiKey}
           />)}

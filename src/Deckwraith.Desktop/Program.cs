@@ -51,14 +51,13 @@ else
     app.UseStaticFiles();
 }
 
-app.MapGet("/api/v1/status", async (CancellationToken cancellationToken) => Results.Json(new
+app.MapGet("/api/v1/status", () => Results.Json(new
 {
     protocolVersion = HostProtocol.CurrentVersion,
     eventCursor = session.LatestEventCursor,
     deckPath = session.DeckPath,
     theme = DesktopDeckPreferences.ResolveTheme(),
     themeTokens = DesktopDeckPreferences.ResolveThemeTokens(),
-    providers = await session.ReadProviderSnapshotsAsync(cancellationToken).ConfigureAwait(false),
 }, ProtocolJson.Options));
 
 app.MapGet("/api/v1/providers", async (CancellationToken cancellationToken) =>
@@ -533,16 +532,19 @@ internal sealed class DesktopDeckSession : IDisposable
     public async ValueTask<IReadOnlyList<ProviderSnapshot>> ReadProviderSnapshotsAsync(
         CancellationToken cancellationToken = default)
     {
+        DeckwraithHost runtime;
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
-            return await _runtime.ReadProviderSnapshotsAsync(cancellationToken).ConfigureAwait(false);
+            runtime = _runtime;
         }
         finally
         {
             _gate.Release();
         }
+
+        return await runtime.ReadProviderSnapshotsAsync(cancellationToken).ConfigureAwait(false);
     }
 
     public async ValueTask<Deckwraith.Providers.Abstractions.ProviderAuthenticationStatus>
