@@ -39,6 +39,7 @@ app.Use(async (context, next) =>
         "style-src 'self' 'unsafe-inline'; script-src 'self'; frame-ancestors 'none'";
     context.Response.Headers.XContentTypeOptions = "nosniff";
     context.Response.Headers["Referrer-Policy"] = "no-referrer";
+    context.Response.Headers.CacheControl = "no-store";
     await next().ConfigureAwait(false);
 });
 if (rendererRoot is not null)
