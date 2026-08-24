@@ -13,6 +13,7 @@ import {
   pickProjectFolder,
   query,
   selectDeckPath,
+  signInOpenAiSession,
   setThemePreference,
   subscribe,
 } from "./ipc/bridge";
@@ -284,6 +285,19 @@ export function App() {
         <ProviderDialog
           providers={deck?.providers ?? []}
           busy={busy}
+          onSignIn={async () => {
+            setBusy(true);
+            setError("");
+            try {
+              await signInOpenAiSession();
+              await refresh();
+            } catch (reason) {
+              setError(messageOf(reason));
+              throw reason;
+            } finally {
+              setBusy(false);
+            }
+          }}
           onImport={async () => {
             setBusy(true);
             setError("");
@@ -896,9 +910,10 @@ function ThemeDialog({ theme, tokens, busy, onSave }: {
   </Dialog.Root>;
 }
 
-function ProviderDialog({ providers, busy, onImport, onDisconnect }: {
+function ProviderDialog({ providers, busy, onSignIn, onImport, onDisconnect }: {
   providers: ProviderSnapshot[];
   busy: boolean;
+  onSignIn: () => Promise<void>;
   onImport: () => Promise<void>;
   onDisconnect: () => Promise<void>;
 }) {
@@ -932,12 +947,15 @@ function ProviderDialog({ providers, busy, onImport, onDisconnect }: {
           {authentication?.accountLabel && <small>Account: {authentication.accountLabel}</small>}
           {authentication?.expiresAt && <small>Access token expires {formatDate(authentication.expiresAt)}</small>}
           <div className="provider-note">
-            Deckwraith talks to OpenAI directly. Importing copies your existing Codex sign-in into the Mac Keychain; inference does not start Codex or a local proxy.
+            Deckwraith opens OpenAI in your browser, receives the private callback on localhost, and keeps the resulting session in the Mac Keychain. Inference does not start Codex or a local proxy.
           </div>
           <div className="button-cluster">
-            <button disabled={busy} onClick={() => {
+            <button className="primary" disabled={busy} onClick={() => {
+              void onSignIn().catch((reason: unknown) => setLocalError(messageOf(reason)));
+            }}>{connected ? "Connect a different ChatGPT account" : "Connect with ChatGPT"}</button>
+            <button className="quiet" disabled={busy} onClick={() => {
               void onImport().catch((reason: unknown) => setLocalError(messageOf(reason)));
-            }}>{connected ? "Replace from existing sign-in" : "Use existing sign-in"}</button>
+            }}>Import an existing Codex sign-in</button>
             {connected && <button className="danger" disabled={busy} onClick={() => {
               void onDisconnect().catch((reason: unknown) => setLocalError(messageOf(reason)));
             }}>Disconnect</button>}

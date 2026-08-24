@@ -128,6 +128,20 @@ export async function importExistingOpenAiSession(): Promise<ProviderAuthenticat
   return result;
 }
 
+export async function signInOpenAiSession(): Promise<ProviderAuthenticationStatus> {
+  const response = await fetch("/api/v1/providers/openai-subscription/sign-in", {
+    method: "POST",
+  });
+  const result = (await response.json()) as ProviderAuthenticationStatus & {
+    code?: string;
+    message?: string;
+  };
+  if (!response.ok) {
+    throw new BridgeError(result.code ?? "transport", result.message ?? response.statusText);
+  }
+  return result;
+}
+
 export async function disconnectOpenAiSession(): Promise<ProviderSnapshot[]> {
   const response = await fetch("/api/v1/providers/openai-subscription/disconnect", {
     method: "POST",

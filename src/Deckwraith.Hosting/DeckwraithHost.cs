@@ -278,6 +278,13 @@ public sealed class DeckwraithHost : IDisposable
         CancellationToken cancellationToken = default) =>
         GetOpenAiSubscriptionProvider().ImportCodexSessionAsync(path, cancellationToken);
 
+    public ValueTask<ProviderAuthenticationStatus> SignInOpenAiSubscriptionAsync(
+        Func<Uri, CancellationToken, ValueTask> openBrowser,
+        CancellationToken cancellationToken = default) =>
+        GetOpenAiSubscriptionProvider().SignInWithBrowserAsync(
+            openBrowser,
+            cancellationToken: cancellationToken);
+
     public ValueTask DisconnectOpenAiSubscriptionAsync(
         CancellationToken cancellationToken = default) =>
         GetOpenAiSubscriptionProvider().DisconnectAsync(cancellationToken);

@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Net;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -8,12 +9,14 @@ using Deckwraith.Providers.Abstractions;
 namespace Deckwraith.Providers.OpenAI;
 
 public sealed record OpenAiSubscriptionAuthenticationOptions(
+    Uri AuthorizationEndpoint,
     Uri TokenEndpoint,
     string ClientId,
     string CredentialId = "provider.openai.subscription",
     int RefreshLookaheadSeconds = 300)
 {
     public static OpenAiSubscriptionAuthenticationOptions CreateDefault() => new(
+        new Uri("https://auth.openai.com/oauth/authorize"),
         new Uri("https://auth.openai.com/oauth/token"),
         "app_EMoamEEZ73f0CkXaXp7hrann");
 }
@@ -47,9 +50,159 @@ public sealed class OpenAiSubscriptionCredentialManager : IProviderAuthenticatio
         ArgumentException.ThrowIfNullOrWhiteSpace(_options.ClientId);
         ArgumentException.ThrowIfNullOrWhiteSpace(_options.CredentialId);
         ArgumentOutOfRangeException.ThrowIfNegative(_options.RefreshLookaheadSeconds);
+        if (!_options.AuthorizationEndpoint.IsAbsoluteUri ||
+            !StringComparer.OrdinalIgnoreCase.Equals(
+                _options.AuthorizationEndpoint.Scheme,
+                Uri.UriSchemeHttps))
+        {
+            throw new ArgumentException(
+                "The OpenAI authorization endpoint must be an absolute HTTPS URI.",
+                nameof(options));
+        }
     }
 
     public string StorageKind => _credentialStore.StorageKind;
+
+    internal OpenAiSubscriptionAuthorizationRequest CreateAuthorizationRequest(Uri redirectUri)
+    {
+        ArgumentNullException.ThrowIfNull(redirectUri);
+        if (!redirectUri.IsAbsoluteUri ||
+            !StringComparer.OrdinalIgnoreCase.Equals(redirectUri.Scheme, Uri.UriSchemeHttp) ||
+            !StringComparer.OrdinalIgnoreCase.Equals(redirectUri.Host, "localhost"))
+        {
+            throw new ArgumentException(
+                "The ChatGPT browser callback must use an absolute localhost HTTP URI.",
+                nameof(redirectUri));
+        }
+
+        var verifier = Base64Url(RandomNumberGenerator.GetBytes(64));
+        var challenge = Base64Url(SHA256.HashData(Encoding.ASCII.GetBytes(verifier)));
+        var state = Base64Url(RandomNumberGenerator.GetBytes(32));
+        var query = BuildQuery(new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["response_type"] = "code",
+            ["client_id"] = _options.ClientId,
+            ["redirect_uri"] = redirectUri.AbsoluteUri,
+            ["scope"] = "openid profile email offline_access",
+            ["code_challenge"] = challenge,
+            ["code_challenge_method"] = "S256",
+            ["state"] = state,
+            ["id_token_add_organizations"] = "true",
+            ["codex_cli_simplified_flow"] = "true",
+            ["originator"] = "deckwraith",
+        });
+        var authorizationUri = new UriBuilder(_options.AuthorizationEndpoint)
+        {
+            Query = query,
+        }.Uri;
+        return new OpenAiSubscriptionAuthorizationRequest(
+            authorizationUri,
+            redirectUri,
+            state,
+            verifier);
+    }
+
+    internal async ValueTask<ProviderAuthenticationStatus> ExchangeAuthorizationCodeAsync(
+        OpenAiSubscriptionAuthorizationRequest authorization,
+        string code,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(authorization);
+        ArgumentException.ThrowIfNullOrWhiteSpace(code);
+        using var request = new HttpRequestMessage(HttpMethod.Post, _options.TokenEndpoint)
+        {
+            Content = new FormUrlEncodedContent(new Dictionary<string, string>
+            {
+                ["grant_type"] = "authorization_code",
+                ["code"] = code,
+                ["redirect_uri"] = authorization.RedirectUri.AbsoluteUri,
+                ["client_id"] = _options.ClientId,
+                ["code_verifier"] = authorization.CodeVerifier,
+            }),
+        };
+
+        HttpResponseMessage response;
+        try
+        {
+            response = await _client.SendAsync(request, cancellationToken).ConfigureAwait(false);
+        }
+        catch (HttpRequestException exception)
+        {
+            throw new OpenAiAuthenticationException(
+                "credential-login-transport",
+                "Deckwraith could not reach OpenAI to complete ChatGPT sign-in.",
+                true,
+                exception);
+        }
+        catch (OperationCanceledException exception) when (!cancellationToken.IsCancellationRequested)
+        {
+            throw new OpenAiAuthenticationException(
+                "credential-login-timeout",
+                "OpenAI did not complete ChatGPT sign-in in time.",
+                true,
+                exception);
+        }
+
+        using (response)
+        {
+            if (!response.IsSuccessStatusCode)
+            {
+                var detail = await ReadRefreshErrorAsync(response, cancellationToken)
+                    .ConfigureAwait(false);
+                throw new OpenAiAuthenticationException(
+                    "credential-login-rejected",
+                    $"OpenAI rejected the ChatGPT sign-in ({detail}).",
+                    false);
+            }
+
+            try
+            {
+                using var document = JsonDocument.Parse(
+                    await response.Content.ReadAsStringAsync(cancellationToken)
+                        .ConfigureAwait(false));
+                var payload = document.RootElement;
+                var accessToken = RequiredString(payload, "access_token");
+                var refreshToken = RequiredString(payload, "refresh_token");
+                var idToken = OptionalString(payload, "id_token");
+                var accountId = ReadAccountId(accessToken) ??
+                    ReadAccountId(idToken) ??
+                    throw new OpenAiAuthenticationException(
+                        "credential-invalid",
+                        "The ChatGPT sign-in did not identify an account.",
+                        false);
+                var expiresAt = payload.TryGetProperty("expires_in", out var expiresIn) &&
+                    expiresIn.TryGetInt64(out var seconds)
+                        ? _timeProvider.GetUtcNow().AddSeconds(seconds)
+                        : ReadExpiration(accessToken) ??
+                            ReadExpiration(idToken) ??
+                            _timeProvider.GetUtcNow().AddHours(1);
+                await SaveCredentialAsync(
+                    new StoredCredential(
+                        accessToken,
+                        refreshToken,
+                        idToken,
+                        accountId,
+                        ReadClaim(idToken, "email") ?? ReadClaim(accessToken, "email"),
+                        expiresAt,
+                        _timeProvider.GetUtcNow()),
+                    cancellationToken).ConfigureAwait(false);
+            }
+            catch (OpenAiAuthenticationException)
+            {
+                throw;
+            }
+            catch (JsonException exception)
+            {
+                throw new OpenAiAuthenticationException(
+                    "credential-login-response-invalid",
+                    "OpenAI returned an invalid ChatGPT sign-in response.",
+                    false,
+                    exception);
+            }
+        }
+
+        return await GetAuthenticationStatusAsync(cancellationToken).ConfigureAwait(false);
+    }
 
     public async ValueTask<ProviderAuthenticationStatus> GetAuthenticationStatusAsync(
         CancellationToken cancellationToken = default)
@@ -456,6 +609,18 @@ public sealed class OpenAiSubscriptionCredentialManager : IProviderAuthenticatio
         value.TryGetProperty(name, out var property) && property.ValueKind is JsonValueKind.String
             ? property.GetString()
             : null;
+
+    private static string BuildQuery(IReadOnlyDictionary<string, string> values) =>
+        string.Join(
+            "&",
+            values.Select(value =>
+                Uri.EscapeDataString(value.Key) + "=" + Uri.EscapeDataString(value.Value)));
+
+    private static string Base64Url(byte[] value) =>
+        Convert.ToBase64String(value)
+            .TrimEnd('=')
+            .Replace('+', '-')
+            .Replace('/', '_');
 
     private static DateTimeOffset? ReadExpiration(string? token)
     {

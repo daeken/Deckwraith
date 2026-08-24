@@ -57,12 +57,17 @@ The subscription adapter talks directly to OpenAI's Codex Responses transport. I
 Codex or a local proxy, and it never falls back to `OPENAI_API_KEY` billing. This follows OpenAI's
 [documented distinction between ChatGPT subscription sign-in and API-key access](https://learn.chatgpt.com/docs/auth).
 
-During the current macOS dogfood phase, **Provider access → Use existing sign-in** imports an
-existing `~/.codex/auth.json` ChatGPT session into Deckwraith's own macOS Keychain item. The import
-is explicit; the source file is never copied into the deck. Deckwraith then refreshes the session
-natively through OpenAI before expiry and retries one rejected request after a forced refresh. A
-Deckwraith-owned browser sign-in remains part of the active pre-1.0 gate, so this import is a rapid
-testing bridge rather than the finished onboarding flow.
+**Provider access → Connect with ChatGPT** opens OpenAI's sign-in flow in the system browser.
+Deckwraith creates a fresh PKCE verifier and state, listens only on the registered
+`http://localhost:1455/auth/callback` long enough to receive that flow, exchanges the authorization
+code directly with OpenAI, and stores the resulting session in its own platform credential item.
+This follows OpenAI's documented browser-return flow and local credential caching; no login secret
+is placed in the deck.
+
+Deckwraith refreshes the session natively before expiry and retries one rejected inference request
+after a forced refresh. **Import an existing Codex sign-in** remains available as an explicit
+fallback during dogfooding; it copies the token set from `~/.codex/auth.json` into Deckwraith's
+credential store without copying the source file or involving Codex in inference.
 
 Example:
 

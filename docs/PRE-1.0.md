@@ -35,6 +35,12 @@ Provider web subscriptions are not assumed to expose the same API or entitlement
 accounts. Each native subscription adapter must document the provider-owned flow and transport it
 implements; Deckwraith must not silently fall back to API billing.
 
+Current progress: OpenAI ChatGPT subscription access now has a Deckwraith-owned browser/PKCE flow,
+loopback callback, secure credential storage, refresh, explicit authentication states, native
+Responses transport, deterministic contracts, and a live smoke path. OpenAI API-key entry and the
+remaining providers still need first-class credential UI and their own readiness snapshots before
+this gate is complete.
+
 ## Haunt project checkpoints
 
 A haunt may point at a project working directory and define an automatic commit policy. This is

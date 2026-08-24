@@ -1,4 +1,6 @@
 using System.Net;
+using System.Net.Sockets;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using Deckwraith.Core.Context;
@@ -80,6 +82,86 @@ public sealed class OpenAiSubscriptionProviderTests
         {
             File.Delete(authPath);
         }
+    }
+
+    [Fact]
+    public void BrowserAuthorizationUsesPkceWithoutExposingTheVerifier()
+    {
+        var manager = CreateManager(new MemoryCredentialStore());
+
+        var authorization = manager.CreateAuthorizationRequest(
+            new Uri("http://localhost:1455/auth/callback"));
+        var query = ParseQuery(authorization.AuthorizationUri);
+
+        Assert.Equal("code", query["response_type"]);
+        Assert.Equal("S256", query["code_challenge_method"]);
+        Assert.Equal(
+            Base64Url(SHA256.HashData(Encoding.ASCII.GetBytes(authorization.CodeVerifier))),
+            query["code_challenge"]);
+        Assert.Equal("openid profile email offline_access", query["scope"]);
+        Assert.Equal("http://localhost:1455/auth/callback", query["redirect_uri"]);
+        Assert.Equal("deckwraith", query["originator"]);
+        Assert.Equal("true", query["id_token_add_organizations"]);
+        Assert.Equal("true", query["codex_cli_simplified_flow"]);
+        Assert.Equal(authorization.State, query["state"]);
+        Assert.DoesNotContain(
+            authorization.CodeVerifier,
+            authorization.AuthorizationUri.AbsoluteUri,
+            StringComparison.Ordinal);
+        Assert.InRange(authorization.CodeVerifier.Length, 43, 128);
+    }
+
+    [Fact]
+    public async Task BrowserLoginOwnsLoopbackCallbackAndPersistsSession()
+    {
+        var store = new MemoryCredentialStore();
+        var accessToken = Jwt(new
+        {
+            exp = Now.AddHours(1).ToUnixTimeSeconds(),
+            chatgpt_account_id = "account-1",
+        });
+        var handler = new RecordingHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(JsonSerializer.Serialize(new
+            {
+                access_token = accessToken,
+                refresh_token = "browser-refresh-token",
+                id_token = Jwt(new
+                {
+                    exp = Now.AddHours(1).ToUnixTimeSeconds(),
+                    email = "sera@example.test",
+                }),
+                expires_in = 3600,
+            }), Encoding.UTF8, "application/json"),
+        });
+        var manager = CreateManager(store, new HttpClient(handler));
+        var provider = new OpenAiSubscriptionProvider(manager);
+        var callbackPort = FindFreeTcpPort();
+        using var callbackClient = new HttpClient();
+        Task<HttpResponseMessage>? callbackTask = null;
+
+        var status = await provider.SignInWithBrowserAsync(
+            (authorizationUri, cancellationToken) =>
+            {
+                var query = ParseQuery(authorizationUri);
+                var callbackUri = new UriBuilder(query["redirect_uri"])
+                {
+                    Query = "code=browser-code&state=" + Uri.EscapeDataString(query["state"]),
+                }.Uri;
+                callbackTask = callbackClient.GetAsync(callbackUri, cancellationToken);
+                return ValueTask.CompletedTask;
+            },
+            new OpenAiSubscriptionBrowserLoginOptions(callbackPort, TimeoutSeconds: 10));
+        using var callbackResponse = await callbackTask!;
+        var callbackBody = await callbackResponse.Content.ReadAsStringAsync();
+
+        Assert.Equal(ProviderAuthenticationState.Ready, status.State);
+        Assert.Equal("sera@example.test", status.AccountLabel);
+        Assert.Contains("grant_type=authorization_code", handler.RequestBody, StringComparison.Ordinal);
+        Assert.Contains("code=browser-code", handler.RequestBody, StringComparison.Ordinal);
+        Assert.Contains("code_verifier=", handler.RequestBody, StringComparison.Ordinal);
+        Assert.Contains("browser-refresh-token", store.Payload, StringComparison.Ordinal);
+        Assert.Contains("connected", callbackBody, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -346,6 +428,35 @@ public sealed class OpenAiSubscriptionProviderTests
 
         return Encode(Encoding.UTF8.GetBytes("{\"alg\":\"none\"}")) + "." +
             Encode(JsonSerializer.SerializeToUtf8Bytes(claims)) + ".signature";
+    }
+
+    private static string Base64Url(byte[] value) =>
+        Convert.ToBase64String(value)
+            .TrimEnd('=')
+            .Replace('+', '-')
+            .Replace('/', '_');
+
+    private static Dictionary<string, string> ParseQuery(Uri uri) =>
+        uri.Query.TrimStart('?')
+            .Split('&', StringSplitOptions.RemoveEmptyEntries)
+            .Select(segment => segment.Split('=', 2))
+            .ToDictionary(
+                segment => Uri.UnescapeDataString(segment[0]),
+                segment => Uri.UnescapeDataString(segment.ElementAtOrDefault(1) ?? string.Empty),
+                StringComparer.Ordinal);
+
+    private static int FindFreeTcpPort()
+    {
+        var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        try
+        {
+            return ((IPEndPoint)listener.LocalEndpoint).Port;
+        }
+        finally
+        {
+            listener.Stop();
+        }
     }
 
     private sealed class MemoryCredentialStore : IProviderCredentialStore

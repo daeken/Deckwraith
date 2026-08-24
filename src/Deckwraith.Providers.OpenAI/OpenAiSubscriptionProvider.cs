@@ -56,6 +56,13 @@ public sealed class OpenAiSubscriptionProvider : IModelProvider, IProviderAuthen
         CancellationToken cancellationToken = default) =>
         _credentials.ImportCodexSessionAsync(path, cancellationToken);
 
+    public ValueTask<ProviderAuthenticationStatus> SignInWithBrowserAsync(
+        Func<Uri, CancellationToken, ValueTask> openBrowser,
+        OpenAiSubscriptionBrowserLoginOptions? options = null,
+        CancellationToken cancellationToken = default) =>
+        new OpenAiSubscriptionBrowserLogin(_credentials)
+            .SignInAsync(openBrowser, options, cancellationToken);
+
     public ValueTask DisconnectAsync(CancellationToken cancellationToken = default) =>
         _credentials.DisconnectAsync(cancellationToken);
 

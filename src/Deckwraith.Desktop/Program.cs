@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Net;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -64,6 +65,26 @@ app.MapGet("/api/v1/providers", async (CancellationToken cancellationToken) =>
     Results.Json(
         await session.ReadProviderSnapshotsAsync(cancellationToken).ConfigureAwait(false),
         ProtocolJson.Options));
+
+app.MapPost("/api/v1/providers/openai-subscription/sign-in", async (
+    CancellationToken cancellationToken) =>
+{
+    try
+    {
+        return Results.Json(
+            await session.SignInOpenAiSubscriptionAsync(
+                OpenExternalAsync,
+                cancellationToken).ConfigureAwait(false),
+            ProtocolJson.Options);
+    }
+    catch (OpenAiAuthenticationException exception)
+    {
+        return Results.Json(
+            new { code = exception.Code, exception.Message },
+            ProtocolJson.Options,
+            statusCode: StatusCodes.Status400BadRequest);
+    }
+});
 
 app.MapPost("/api/v1/providers/openai-subscription/import-existing", async (
     ProviderImportRequest request,
@@ -307,6 +328,30 @@ if (HybridSupport.IsElectronActive)
 
 await app.WaitForShutdownAsync();
 
+static async ValueTask OpenExternalAsync(Uri uri, CancellationToken cancellationToken)
+{
+    cancellationToken.ThrowIfCancellationRequested();
+    if (HybridSupport.IsElectronActive)
+    {
+        var error = await Electron.Shell.OpenExternalAsync(uri.AbsoluteUri).ConfigureAwait(false);
+        if (!string.IsNullOrWhiteSpace(error))
+        {
+            throw new InvalidOperationException(error);
+        }
+
+        return;
+    }
+
+    using var process = Process.Start(new ProcessStartInfo(uri.AbsoluteUri)
+    {
+        UseShellExecute = true,
+    });
+    if (process is null)
+    {
+        throw new InvalidOperationException("The system browser could not be started.");
+    }
+}
+
 static string FindExistingDirectory(string path)
 {
     var candidate = new DirectoryInfo(DesktopDeckPreferences.NormalizePath(path));
@@ -477,6 +522,25 @@ internal sealed class DesktopDeckSession : IDisposable
             ObjectDisposedException.ThrowIf(_disposed, this);
             return await _runtime.ImportOpenAiSubscriptionAsync(path, cancellationToken)
                 .ConfigureAwait(false);
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    public async ValueTask<Deckwraith.Providers.Abstractions.ProviderAuthenticationStatus>
+        SignInOpenAiSubscriptionAsync(
+            Func<Uri, CancellationToken, ValueTask> openBrowser,
+            CancellationToken cancellationToken = default)
+    {
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            return await _runtime.SignInOpenAiSubscriptionAsync(
+                openBrowser,
+                cancellationToken).ConfigureAwait(false);
         }
         finally
         {
