@@ -9,6 +9,8 @@
     <PackageReference Include="xunit.runner.visualstudio" />
   </ItemGroup>
   <ItemGroup>
+    <ProjectReference Include="../../src/Deckwraith.Kernels.PowerShell/Deckwraith.Kernels.PowerShell.csproj" />
+    <ProjectReference Include="../../src/Deckwraith.Notebooks/Deckwraith.Notebooks.csproj" />
     <ProjectReference Include="../../src/Deckwraith.Persistence/Deckwraith.Persistence.csproj" />
     <ProjectReference Include="../../src/Deckwraith.PowerShell/Deckwraith.PowerShell.csproj" />
     <ProjectReference Include="../Deckwraith.Mcp.TestServer/Deckwraith.Mcp.TestServer.csproj" />

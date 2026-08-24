@@ -194,6 +194,59 @@ public sealed class InferenceSpineEndToEndTests
             temporaryDirectory.Path, ["status", "--porcelain"], CancellationToken.None));
     }
 
+    [Fact]
+    public async Task ModelContextAndArchiveStayPrivateToTheActiveWraith()
+    {
+        using var temporaryDirectory = new TemporaryDirectory();
+        var deckState = new JsonDeckStateStore(temporaryDirectory.Path);
+        var inferenceState = new JsonInferenceStateStore(temporaryDirectory.Path);
+        var archive = new JsonlAgentArchive(temporaryDirectory.Path);
+        var checkpoints = new GitCheckpointStore(temporaryDirectory.Path);
+        using (var state = new StateSpine(
+            deckState,
+            archive,
+            new ContentAddressedArtifactStore(temporaryDirectory.Path),
+            checkpoints,
+            new FixedClock()))
+        {
+            await state.InitializeAsync(CancellationToken.None);
+            await state.CreateWraithAsync("wraith1", CancellationToken.None);
+            await state.CreateWraithAsync("wraith2", CancellationToken.None);
+        }
+
+        const string privateText = "private-wraith1-evidence-7cb1";
+        var provider = new CapturingProvider();
+        using var runtime = new InferenceRuntime(
+            deckState,
+            inferenceState,
+            archive,
+            checkpoints,
+            new ModelProviderRegistry([provider]),
+            clock: new FixedClock());
+        var first = await runtime.StartRunAsync(
+            "wraith1", null, "Hold private context", "capture", "test-model");
+        await runtime.ExecuteTurnAsync(
+            "wraith1", first.Run.RunId, privateText, CancellationToken.None);
+        var second = await runtime.StartRunAsync(
+            "wraith2", null, "Remain isolated", "capture", "test-model");
+        await runtime.ExecuteTurnAsync(
+            "wraith2", second.Run.RunId, "Begin without foreign context.", CancellationToken.None);
+
+        Assert.Equal(2, provider.Requests.Count);
+        Assert.Equal("wraith1", provider.Requests[0].Identity.Name);
+        Assert.Equal("wraith2", provider.Requests[1].Identity.Name);
+        Assert.DoesNotContain(
+            privateText,
+            JsonSerializer.Serialize(provider.Requests[1]),
+            StringComparison.Ordinal);
+        var secondArchive = await archive.ReadAllAsync(
+            Deckwraith.Core.Naming.CanonicalName.Parse("wraith2"), CancellationToken.None);
+        Assert.All(secondArchive, record =>
+            Assert.DoesNotContain(privateText, record.Payload.GetRawText(), StringComparison.Ordinal));
+        Assert.Equal(string.Empty, await StateSpineEndToEndTests.RunGitForTestsAsync(
+            temporaryDirectory.Path, ["status", "--porcelain"], CancellationToken.None));
+    }
+
     private sealed class ScriptedProvider : IModelProvider
     {
         public string ProviderId => "fake";
@@ -257,6 +310,28 @@ public sealed class InferenceSpineEndToEndTests
             yield return new ModelResponseStarted("failed-request");
             yield return new ModelProviderError(
                 "intentional-failure", "provider failed intentionally", false);
+        }
+    }
+
+    private sealed class CapturingProvider : IModelProvider
+    {
+        public string ProviderId => "capture";
+
+        public ProviderCapabilities Capabilities { get; } = new(
+            true, false, false, false, false);
+
+        public List<ModelRequest> Requests { get; } = [];
+
+        public async IAsyncEnumerable<ModelEvent> RunAsync(
+            ModelRequest request,
+            [EnumeratorCancellation] CancellationToken cancellationToken)
+        {
+            await Task.Yield();
+            cancellationToken.ThrowIfCancellationRequested();
+            Requests.Add(request);
+            yield return new ModelResponseStarted($"capture-{Requests.Count}");
+            yield return new ModelTextDelta("isolated");
+            yield return new ModelResponseCompleted(ModelFinishReason.Stop, null);
         }
     }
 
