@@ -1,0 +1,7 @@
+{
+  "name": "image-size",
+  "version": "0.0.0-deckwraith",
+  "description": "Fail-closed replacement for Electron.NET's unused splash image parser.",
+  "main": "index.js",
+  "license": "MIT"
+}

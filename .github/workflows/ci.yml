@@ -1,0 +1,70 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  headless-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - name: Verify headless lifecycle and dependency graph
+        run: ./eng/verify-headless.sh linux-x64
+
+  renderer:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ui
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run build
+
+  desktop-publish:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            rid: osx-x64
+          - os: ubuntu-latest
+            rid: linux-x64
+          - os: windows-latest
+            rid: win-x64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+      - name: Publish self-contained desktop payload
+        run: >-
+          dotnet publish src/Deckwraith.Desktop/Deckwraith.Desktop.csproj
+          -c Release
+          -r ${{ matrix.rid }}
+          --self-contained true
+          -p:PublishSingleFile=true
+          -o artifacts/desktop-publish/${{ matrix.rid }}
+      - name: Verify renderer payload
+        shell: bash
+        run: test -f artifacts/desktop-publish/${{ matrix.rid }}/wwwroot/index.html
