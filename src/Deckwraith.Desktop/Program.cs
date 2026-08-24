@@ -440,7 +440,11 @@ if (HybridSupport.IsElectronActive)
     });
     mainWindow.SetTitle("Deckwraith");
     mainWindow.OnReadyToShow += mainWindow.Show;
-    mainWindow.OnClosed += app.Lifetime.StopApplication;
+    mainWindow.OnClosed += () =>
+    {
+        app.Lifetime.StopApplication();
+        Electron.App.Quit();
+    };
 }
 
 await app.WaitForShutdownAsync();
