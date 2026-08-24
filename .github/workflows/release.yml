@@ -79,19 +79,18 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          set +e
-          deckwraith_lookup="$(gh api \
-            "repos/${GITHUB_REPOSITORY}/releases/tags/${GITHUB_REF_NAME}" \
-            --jq .id 2>&1)"
-          deckwraith_status=$?
-          set -e
-          if [[ "$deckwraith_status" -eq 0 ]]; then
-            gh api --method DELETE \
-              "repos/${GITHUB_REPOSITORY}/releases/${deckwraith_lookup}"
-          elif [[ "$deckwraith_lookup" != *"HTTP 404"* ]]; then
-            echo "$deckwraith_lookup" >&2
-            exit "$deckwraith_status"
-          fi
+          deckwraith_release_ids="$(
+            gh api --paginate \
+              "repos/${GITHUB_REPOSITORY}/releases?per_page=100" |
+              jq -r --arg tag "$GITHUB_REF_NAME" \
+                '.[] | select(.tag_name == $tag) | .id'
+          )"
+          while IFS= read -r deckwraith_release_id; do
+            if [[ -n "$deckwraith_release_id" ]]; then
+              gh api --method DELETE \
+                "repos/${GITHUB_REPOSITORY}/releases/${deckwraith_release_id}"
+            fi
+          done <<< "$deckwraith_release_ids"
       - name: Publish GitHub release
         id: publish_release
         continue-on-error: true
@@ -126,3 +125,36 @@ jobs:
             artifacts/**/*.tar.gz
             artifacts/**/*.blockmap
             artifacts/**/latest*.yml
+      - name: Verify published release inventory
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          deckwraith_version="${GITHUB_REF_NAME#v}"
+          mapfile -t deckwraith_actual < <(
+            gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${GITHUB_REF_NAME}" \
+              --jq '.assets[].name' | sort
+          )
+          deckwraith_expected=(
+            "Deckwraith-${deckwraith_version}-mac.zip"
+            "Deckwraith-${deckwraith_version}-mac.zip.blockmap"
+            "Deckwraith-${deckwraith_version}-win.zip"
+            "Deckwraith-${deckwraith_version}.AppImage"
+            "Deckwraith-${deckwraith_version}.dmg"
+            "Deckwraith-${deckwraith_version}.dmg.blockmap"
+            "Deckwraith.Setup.${deckwraith_version}.exe"
+            "Deckwraith.Setup.${deckwraith_version}.exe.blockmap"
+            "electron-net-${deckwraith_version}.tar.gz"
+            "latest-linux.yml"
+            "latest-mac.yml"
+            "latest.yml"
+          )
+          mapfile -t deckwraith_expected < <(
+            printf '%s\n' "${deckwraith_expected[@]}" | sort
+          )
+          if [[ "${deckwraith_actual[*]}" != "${deckwraith_expected[*]}" ]]; then
+            printf 'Expected release assets:\n%s\n' "${deckwraith_expected[*]}" >&2
+            printf 'Actual release assets:\n%s\n' "${deckwraith_actual[*]}" >&2
+            exit 1
+          fi
