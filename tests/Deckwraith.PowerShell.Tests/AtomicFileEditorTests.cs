@@ -200,6 +200,31 @@ public sealed class AtomicFileEditorTests
     }
 
     [Fact]
+    public async Task NativeEquivalentPathCasingIsOneOrderedFileBatch()
+    {
+        using var temporaryDirectory = new TemporaryDirectory();
+        var actualPath = Path.Combine(temporaryDirectory.Path, "MixedCase.txt");
+        var alternatePath = Path.Combine(temporaryDirectory.Path, "mixedcase.txt");
+        await File.WriteAllTextAsync(actualPath, "body");
+        if (!File.Exists(alternatePath))
+        {
+            return;
+        }
+
+        var result = await AtomicFileEditor.ApplyAsync(new AtomicFileEditBatch(
+        [
+            new("MixedCase.txt", FileEditKind.Prepend, Text: "before-"),
+            new("mixedcase.txt", FileEditKind.Append, Text: "-after"),
+        ], temporaryDirectory.Path));
+
+        Assert.Equal("before-body-after", await File.ReadAllTextAsync(actualPath));
+        var receipt = Assert.Single(result.Files);
+        Assert.Equal(
+            [FileEditKind.Prepend, FileEditKind.Append],
+            receipt.Operations);
+    }
+
+    [Fact]
     public async Task MissingAnchorOrEscapingRootLeavesEveryFileUntouched()
     {
         using var temporaryDirectory = new TemporaryDirectory();

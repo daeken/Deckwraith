@@ -146,7 +146,7 @@ public sealed class AtomicFileEditor
 
         var root = string.IsNullOrWhiteSpace(batch.RootPath)
             ? null
-            : Path.GetFullPath(batch.RootPath);
+            : ResolveNativePath(Path.GetFullPath(batch.RootPath));
         return batch.Operations
             .Select(operation =>
             {
@@ -164,7 +164,7 @@ public sealed class AtomicFileEditor
     {
         var root = string.IsNullOrWhiteSpace(batch.RootPath)
             ? null
-            : Path.GetFullPath(batch.RootPath);
+            : ResolveNativePath(Path.GetFullPath(batch.RootPath));
         var grouped = new Dictionary<string, List<AtomicFileEdit>>(PathComparer);
         foreach (var operation in batch.Operations)
         {
@@ -809,8 +809,8 @@ public sealed class AtomicFileEditor
 
     private static string ResolvePath(string path, string? root)
     {
-        var resolved = Path.GetFullPath(
-            Path.IsPathRooted(path) ? path : Path.Combine(root ?? Environment.CurrentDirectory, path));
+        var resolved = ResolveNativePath(Path.GetFullPath(
+            Path.IsPathRooted(path) ? path : Path.Combine(root ?? Environment.CurrentDirectory, path)));
         if (root is null)
         {
             return resolved;
@@ -827,6 +827,53 @@ public sealed class AtomicFileEditor
 
         ValidateNoLinksBelowRoot(root, resolved);
         return resolved;
+    }
+
+    private static string ResolveNativePath(string path)
+    {
+        if (!OperatingSystem.IsWindows() && !OperatingSystem.IsMacOS())
+        {
+            return path;
+        }
+
+        var pathRoot = Path.GetPathRoot(path);
+        if (string.IsNullOrEmpty(pathRoot))
+        {
+            return path;
+        }
+
+        var components = path[pathRoot.Length..].Split(
+            [Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar],
+            StringSplitOptions.RemoveEmptyEntries);
+        var current = pathRoot;
+        for (var index = 0; index < components.Length; index++)
+        {
+            var requested = Path.Combine(current, components[index]);
+            if (!File.Exists(requested) && !Directory.Exists(requested))
+            {
+                return components[index..].Aggregate(current, Path.Combine);
+            }
+
+            string? native = null;
+            foreach (var entry in Directory.EnumerateFileSystemEntries(current))
+            {
+                var name = Path.GetFileName(entry);
+                if (StringComparer.Ordinal.Equals(name, components[index]))
+                {
+                    native = entry;
+                    break;
+                }
+
+                if (native is null && PathComparer.Equals(name, components[index]))
+                {
+                    native = entry;
+                }
+            }
+
+            current = native ?? requested;
+        }
+
+        return current;
     }
 
     private static void ValidateNoLinksBelowRoot(string root, string path)
@@ -926,7 +973,8 @@ public sealed class AtomicFileEditor
     private static string Hash(ReadOnlySpan<byte> bytes) =>
         $"sha256:{Convert.ToHexStringLower(SHA256.HashData(bytes))}";
 
-    private static StringComparer PathComparer => OperatingSystem.IsWindows()
+    private static StringComparer PathComparer =>
+        OperatingSystem.IsWindows() || OperatingSystem.IsMacOS()
         ? StringComparer.OrdinalIgnoreCase
         : StringComparer.Ordinal;
 

@@ -98,6 +98,47 @@ public sealed class GitProjectCommitterTests
     }
 
     [Fact]
+    public async Task CommitsANativeEquivalentPathWithDifferentCasing()
+    {
+        using var temporaryDirectory = new TemporaryDirectory();
+        await InitializeProjectAsync(temporaryDirectory.Path);
+        var actualPath = Path.Combine(temporaryDirectory.Path, "MixedCase.txt");
+        var alternatePath = Path.Combine(temporaryDirectory.Path, "mixedcase.txt");
+        await File.WriteAllTextAsync(actualPath, "original\n");
+        if (!File.Exists(alternatePath))
+        {
+            return;
+        }
+
+        await GitAsync(temporaryDirectory.Path, ["add", "--all"]);
+        await GitAsync(temporaryDirectory.Path, ["commit", "-m", "baseline"]);
+        var batch = new AtomicFileEditBatch(
+            [new("mixedcase.txt", FileEditKind.Append, Text: "wraith edit\n")],
+            temporaryDirectory.Path,
+            "Respect native path identity");
+        var committer = new GitProjectCommitter();
+        var preparation = await committer.PrepareAsync(
+            Policy(temporaryDirectory.Path, allowDirty: false),
+            CanonicalName.Parse("lumen"),
+            CanonicalName.Parse("compiler-lab"),
+            batch.CommitSubject!,
+            batch.CommitBody,
+            AtomicFileEditor.ResolvePaths(batch),
+            CancellationToken.None);
+
+        var edit = await AtomicFileEditor.ApplyAsync(
+            batch,
+            (files, cancellationToken) => committer.CommitAsync(
+                preparation, files, cancellationToken));
+
+        Assert.IsType<ProjectCommitReceipt>(edit.Commit);
+        Assert.Equal("original\nwraith edit", await GitAsync(
+            temporaryDirectory.Path, ["show", "HEAD:MixedCase.txt"]));
+        Assert.Equal(string.Empty, await GitAsync(
+            temporaryDirectory.Path, ["status", "--porcelain=v1"]));
+    }
+
+    [Fact]
     public async Task RefPublicationFailureLeavesTheBranchAndEditBatchUntouched()
     {
         using var temporaryDirectory = new TemporaryDirectory();

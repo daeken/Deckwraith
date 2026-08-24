@@ -15,7 +15,7 @@ public sealed class GitProjectCommitter : IProjectCommitter
     private static readonly string[] OperationDirectoryMarkers =
         ["rebase-merge", "rebase-apply", "sequencer"];
     private static readonly ConcurrentDictionary<string, SemaphoreSlim> RepositoryGates = new(
-        StringComparer.Ordinal);
+        PathComparer);
 
     public async Task<ProjectCommitPreparation> PrepareAsync(
         HauntProjectPolicy policy,
@@ -263,7 +263,7 @@ public sealed class GitProjectCommitter : IProjectCommitter
                 environment).ConfigureAwait(false)).Output
                 .Split('\0', StringSplitOptions.RemoveEmptyEntries);
             if (committedPaths.Length == 0 ||
-                committedPaths.Any(path => !relativePaths.Contains(path, StringComparer.Ordinal)))
+                committedPaths.Any(path => !relativePaths.Contains(path, PathComparer)))
             {
                 throw new ProjectCommitException(
                     "The proposed project commit does not match its edit receipt.");
@@ -486,7 +486,8 @@ public sealed class GitProjectCommitter : IProjectCommitter
     private static string Hash(ReadOnlySpan<byte> bytes) =>
         $"sha256:{Convert.ToHexStringLower(SHA256.HashData(bytes))}";
 
-    private static StringComparer PathComparer => OperatingSystem.IsWindows()
+    private static StringComparer PathComparer =>
+        OperatingSystem.IsWindows() || OperatingSystem.IsMacOS()
         ? StringComparer.OrdinalIgnoreCase
         : StringComparer.Ordinal;
 
