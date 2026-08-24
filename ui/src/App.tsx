@@ -418,7 +418,11 @@ export function App() {
         {error && <div className="error-banner"><b>Something snagged.</b> {error}</div>}
 
         {wraith ? (
-          <Tabs.Root className="workspace-tabs" defaultValue="conversation">
+          <Tabs.Root
+            key={`${selectedWraith}:${selectedHaunt}`}
+            className="workspace-tabs"
+            defaultValue="conversation"
+          >
             <Tabs.List className="tab-list">
               {[
                 ["conversation", "Conversation"],
@@ -431,7 +435,7 @@ export function App() {
                 <Tabs.Trigger key={value} className="tab-trigger" value={value}>{label}</Tabs.Trigger>
               ))}
             </Tabs.List>
-            <Tabs.Content className="tab-content conversation-tab" value="conversation">
+            <Tabs.Content forceMount className="tab-content conversation-tab" value="conversation">
               <ConversationPanel
                 context={wraith.context}
                 identity={wraith.identity}
@@ -456,7 +460,7 @@ export function App() {
                 })}
               />
             </Tabs.Content>
-            <Tabs.Content className="tab-content" value="runs">
+            <Tabs.Content forceMount className="tab-content" value="runs">
               <RunsPanel
                 runs={wraith.runs}
                 providers={deck?.providers.map((provider) => provider.providerId) ?? []}
@@ -466,7 +470,7 @@ export function App() {
                 mutate={mutate}
               />
             </Tabs.Content>
-            <Tabs.Content className="tab-content" value="deckbook">
+            <Tabs.Content forceMount className="tab-content" value="deckbook">
               <DeckbookPanel
                 snapshot={deckbook}
                 wraith={selectedWraith}

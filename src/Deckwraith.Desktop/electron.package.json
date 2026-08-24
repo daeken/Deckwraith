@@ -1,7 +1,7 @@
 {
   "name": "deckwraith-desktop",
   "version": "1.0.0",
-  "description": "A local-first runtime for durable autonomous agent identities.",
+  "description": "A local-first runtime for durable autonomous collaborators.",
   "repository": {
     "type": "git",
     "url": "https://github.com/daeken/Deckwraith"
