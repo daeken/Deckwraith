@@ -17,25 +17,25 @@ jobs:
         with:
           dotnet-version: 10.0.x
       - name: Test core
-        run: dotnet test tests/Deckwraith.Core.Tests/Deckwraith.Core.Tests.csproj -c Release --nologo
+        run: ./eng/run-ci-test.sh tests/Deckwraith.Core.Tests/Deckwraith.Core.Tests.csproj
       - name: Test persistence
-        run: dotnet test tests/Deckwraith.Persistence.Tests/Deckwraith.Persistence.Tests.csproj -c Release --nologo
+        run: ./eng/run-ci-test.sh tests/Deckwraith.Persistence.Tests/Deckwraith.Persistence.Tests.csproj
       - name: Test integration
-        run: dotnet test tests/Deckwraith.IntegrationTests/Deckwraith.IntegrationTests.csproj -c Release --nologo
+        run: ./eng/run-ci-test.sh tests/Deckwraith.IntegrationTests/Deckwraith.IntegrationTests.csproj
       - name: Test notebooks
-        run: dotnet test tests/Deckwraith.Notebooks.Tests/Deckwraith.Notebooks.Tests.csproj -c Release --nologo
+        run: ./eng/run-ci-test.sh tests/Deckwraith.Notebooks.Tests/Deckwraith.Notebooks.Tests.csproj
       - name: Test kernel contracts
-        run: dotnet test tests/Deckwraith.Kernels.ContractTests/Deckwraith.Kernels.ContractTests.csproj -c Release --nologo
+        run: ./eng/run-ci-test.sh tests/Deckwraith.Kernels.ContractTests/Deckwraith.Kernels.ContractTests.csproj
       - name: Test PowerShell
-        run: dotnet test tests/Deckwraith.PowerShell.Tests/Deckwraith.PowerShell.Tests.csproj -c Release --nologo
+        run: ./eng/run-ci-test.sh tests/Deckwraith.PowerShell.Tests/Deckwraith.PowerShell.Tests.csproj
       - name: Test MCP
-        run: dotnet test tests/Deckwraith.Mcp.Tests/Deckwraith.Mcp.Tests.csproj -c Release --nologo
+        run: ./eng/run-ci-test.sh tests/Deckwraith.Mcp.Tests/Deckwraith.Mcp.Tests.csproj
       - name: Test continuity
-        run: dotnet test tests/Deckwraith.Continuity.Tests/Deckwraith.Continuity.Tests.csproj -c Release --nologo
+        run: ./eng/run-ci-test.sh tests/Deckwraith.Continuity.Tests/Deckwraith.Continuity.Tests.csproj
       - name: Test providers
-        run: dotnet test tests/Deckwraith.Providers.ContractTests/Deckwraith.Providers.ContractTests.csproj -c Release --nologo
+        run: ./eng/run-ci-test.sh tests/Deckwraith.Providers.ContractTests/Deckwraith.Providers.ContractTests.csproj
       - name: Test host bridge
-        run: dotnet test tests/Deckwraith.Hosting.Tests/Deckwraith.Hosting.Tests.csproj -c Release --nologo
+        run: ./eng/run-ci-test.sh tests/Deckwraith.Hosting.Tests/Deckwraith.Hosting.Tests.csproj
       - name: Verify headless dependency graph
         run: ./eng/verify-headless.sh linux-x64 --publish-only
 
