@@ -1,0 +1,194 @@
+using System.Management.Automation;
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
+using Deckwraith.Application.Files;
+using Deckwraith.Application.State;
+using Deckwraith.Persistence.Archives;
+using Deckwraith.Persistence.Artifacts;
+using Deckwraith.Persistence.Git;
+using Deckwraith.Persistence.State;
+using Deckwraith.PowerShell.Hosting;
+
+namespace Deckwraith.PowerShell.Tests;
+
+public sealed class AtomicFileEditorTests
+{
+    [Fact]
+    public async Task TextAndStructuralJsonOperationsPublishAsOneValidatedBatch()
+    {
+        using var temporaryDirectory = new TemporaryDirectory();
+        var textPath = Path.Combine(temporaryDirectory.Path, "note.txt");
+        var jsonPath = Path.Combine(temporaryDirectory.Path, "config.json");
+        await File.WriteAllTextAsync(textPath, "body\n");
+        await File.WriteAllTextAsync(jsonPath, """
+            {
+              "name": "old",
+              "items": [1],
+              "obsolete": true
+            }
+            """);
+        var expectedTextHash = Hash(await File.ReadAllBytesAsync(textPath));
+
+        var result = await AtomicFileEditor.ApplyAsync(new AtomicFileEditBatch(
+        [
+            new("note.txt", FileEditKind.Prepend, Text: "header\n", ExpectedHash: expectedTextHash),
+            new("note.txt", FileEditKind.Replace, Match: "body", Replacement: "core"),
+            new("note.txt", FileEditKind.Append, Text: "footer\n"),
+            new("config.json", FileEditKind.JsonTest, JsonPointer: "/name", Value: Json("old")),
+            new("config.json", FileEditKind.JsonSet, JsonPointer: "/name", Value: Json("new")),
+            new("config.json", FileEditKind.JsonInsert, JsonPointer: "/items", JsonIndex: 0, Value: Json(0)),
+            new("config.json", FileEditKind.JsonAppend, JsonPointer: "/items", Value: Json(2)),
+            new("config.json", FileEditKind.JsonRemove, JsonPointer: "/obsolete"),
+        ], temporaryDirectory.Path, "Tune the fixture", "Apply text and JSON edits together."));
+
+        Assert.Equal("header\ncore\nfooter\n", await File.ReadAllTextAsync(textPath));
+        using var document = JsonDocument.Parse(await File.ReadAllTextAsync(jsonPath));
+        Assert.Equal("new", document.RootElement.GetProperty("name").GetString());
+        Assert.Equal([0, 1, 2], document.RootElement.GetProperty("items")
+            .EnumerateArray().Select(item => item.GetInt32()));
+        Assert.False(document.RootElement.TryGetProperty("obsolete", out _));
+        Assert.Equal("Tune the fixture", result.CommitSubject);
+        Assert.Equal(2, result.Files.Count);
+        Assert.Contains(result.Files, file => file.BeforeHash == expectedTextHash);
+        Assert.All(result.Files, file => Assert.StartsWith("sha256:", file.AfterHash));
+        Assert.Empty(Directory.EnumerateFiles(
+            temporaryDirectory.Path, ".deckwraith-edit-*", SearchOption.AllDirectories));
+    }
+
+    [Fact]
+    public async Task MissingAnchorOrEscapingRootLeavesEveryFileUntouched()
+    {
+        using var temporaryDirectory = new TemporaryDirectory();
+        var left = Path.Combine(temporaryDirectory.Path, "left.txt");
+        var right = Path.Combine(temporaryDirectory.Path, "right.txt");
+        await File.WriteAllTextAsync(left, "left");
+        await File.WriteAllTextAsync(right, "right");
+
+        var anchorError = await Assert.ThrowsAsync<AtomicFileEditException>(() =>
+            AtomicFileEditor.ApplyAsync(new AtomicFileEditBatch(
+            [
+                new("left.txt", FileEditKind.Write, Text: "changed"),
+                new("right.txt", FileEditKind.Replace, Match: "missing", Replacement: "changed"),
+            ], temporaryDirectory.Path)));
+
+        Assert.Contains("expected 1 occurrence", anchorError.Message, StringComparison.Ordinal);
+        Assert.Equal("left", await File.ReadAllTextAsync(left));
+        Assert.Equal("right", await File.ReadAllTextAsync(right));
+        await Assert.ThrowsAsync<AtomicFileEditException>(() => AtomicFileEditor.ApplyAsync(
+            new AtomicFileEditBatch(
+                [new("../outside.txt", FileEditKind.Write, Text: "nope")],
+                temporaryDirectory.Path)));
+        Assert.False(File.Exists(Path.Combine(temporaryDirectory.Path, "..", "outside.txt")));
+    }
+
+    [Fact]
+    public async Task SymbolicLinksCannotEscapeTheEditRoot()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        using var temporaryDirectory = new TemporaryDirectory();
+        using var outsideDirectory = new TemporaryDirectory();
+        var outsidePath = Path.Combine(outsideDirectory.Path, "outside.txt");
+        await File.WriteAllTextAsync(outsidePath, "untouched");
+        Directory.CreateSymbolicLink(
+            Path.Combine(temporaryDirectory.Path, "linked"),
+            outsideDirectory.Path);
+
+        var error = await Assert.ThrowsAsync<AtomicFileEditException>(() =>
+            AtomicFileEditor.ApplyAsync(new AtomicFileEditBatch(
+                [new("linked/outside.txt", FileEditKind.Write, Text: "escaped")],
+                temporaryDirectory.Path)));
+
+        Assert.Contains("symbolic link", error.Message, StringComparison.Ordinal);
+        Assert.Equal("untouched", await File.ReadAllTextAsync(outsidePath));
+    }
+
+    [Fact]
+    public async Task HostedPowerShellExposesStructuredAtomicEditing()
+    {
+        using var temporaryDirectory = new TemporaryDirectory();
+        var deckState = new JsonDeckStateStore(temporaryDirectory.Path);
+        var archive = new JsonlAgentArchive(temporaryDirectory.Path);
+        var checkpoints = new GitCheckpointStore(temporaryDirectory.Path);
+        var artifactStore = new ContentAddressedArtifactStore(temporaryDirectory.Path);
+        using (var state = new StateSpine(deckState, archive, artifactStore, checkpoints))
+        {
+            await state.InitializeAsync();
+            await state.CreateHauntAsync("work");
+            await state.CreateWraithAsync("steward");
+        }
+
+        var workspace = Path.Combine(temporaryDirectory.Path, "workspace");
+        Directory.CreateDirectory(workspace);
+        await File.WriteAllTextAsync(Path.Combine(workspace, "note.txt"), "world");
+        await File.WriteAllTextAsync(Path.Combine(workspace, "settings.json"), "{\"enabled\":false}");
+        var durableState = new DurableStateRuntime(
+            deckState,
+            new JsonDurableValueStore(temporaryDirectory.Path),
+            archive,
+            checkpoints);
+        var artifacts = new ArtifactRuntime(deckState, artifactStore, archive, checkpoints);
+        using var manager = new PowerShellRuntimeManager(
+            temporaryDirectory.Path, durableState, artifacts, archive, checkpoints);
+
+        var execution = await manager.ExecuteAsync(
+            new PowerShellInvocationContext("steward", Haunt: "work"),
+            $$"""
+            $ops = @(
+                [pscustomobject]@{ path = 'note.txt'; kind = 'prepend'; text = 'hello ' },
+                [pscustomobject]@{ path = 'settings.json'; kind = 'json-set'; pointer = '/enabled'; value = $true }
+            )
+            $result = Invoke-DwFileEdit -RootPath {{Quote(workspace)}} -Operation $ops -CommitSubject 'Personalize workspace'
+            [pscustomobject]@{
+                CommandType = (Get-Command Invoke-DwFileEdit).CommandType.ToString()
+                FileCount = $result.Files.Count
+                CommitSubject = $result.CommitSubject
+            }
+            """);
+
+        Assert.Empty(execution.Errors);
+        var summary = Assert.Single(execution.Output);
+        Assert.Equal("Cmdlet", Property<string>(summary, "CommandType"));
+        Assert.Equal(2, Property<int>(summary, "FileCount"));
+        Assert.Equal("Personalize workspace", Property<string>(summary, "CommitSubject"));
+        Assert.Equal("hello world", await File.ReadAllTextAsync(Path.Combine(workspace, "note.txt")));
+        using var settings = JsonDocument.Parse(
+            await File.ReadAllTextAsync(Path.Combine(workspace, "settings.json")));
+        Assert.True(settings.RootElement.GetProperty("enabled").GetBoolean());
+    }
+
+    private static JsonElement Json<T>(T value) => JsonSerializer.SerializeToElement(value);
+
+    private static string Hash(byte[] value) =>
+        $"sha256:{Convert.ToHexStringLower(SHA256.HashData(value))}";
+
+    private static T Property<T>(PSObject value, string name) =>
+        Assert.IsType<T>(value.Properties[name].Value);
+
+    private static string Quote(string value) =>
+        "'" + value.Replace("'", "''", StringComparison.Ordinal) + "'";
+
+    private sealed class TemporaryDirectory : IDisposable
+    {
+        public TemporaryDirectory()
+        {
+            Path = System.IO.Path.Combine(
+                System.IO.Path.GetTempPath(), $"deckwraith-file-edit-{Guid.NewGuid():N}");
+            Directory.CreateDirectory(Path);
+        }
+
+        public string Path { get; }
+
+        public void Dispose()
+        {
+            if (Directory.Exists(Path))
+            {
+                Directory.Delete(Path, recursive: true);
+            }
+        }
+    }
+}

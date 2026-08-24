@@ -402,6 +402,7 @@ public sealed class PowerShellRuntimeManager : IDisposable
             AddCmdlet<GetDwToolSchemaCommand>(initialState, "Get-DwToolSchema");
             AddCmdlet<FindDwCommandCommand>(initialState, "Find-DwCommand");
             AddCmdlet<InvokeDwMcpToolCommand>(initialState, "Invoke-DwMcpTool");
+            AddCmdlet<InvokeDwFileEditCommand>(initialState, "Invoke-DwFileEdit");
             AddCmdlet<ReloadDwToolsCommand>(initialState, "Update-DwTools");
             initialState.Commands.Add(new SessionStateAliasEntry(
                 "Reload-DwTools", "Update-DwTools"));

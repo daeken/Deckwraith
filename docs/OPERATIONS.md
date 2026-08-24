@@ -105,6 +105,55 @@ Credentials are read from the host environment at invocation time and are not wr
 provider configuration. They can still leak transitively if a tool, model, log, or artifact emits
 them, so this is not a repository-sanitization guarantee.
 
+## Atomic file edits
+
+Hosted wraith runspaces expose `Invoke-DwFileEdit`. One call validates and publishes a complete
+batch across one or many UTF-8 files. Supported operation kinds are `write`, `prepend`, `append`,
+`replace`, `json-set`, `json-remove`, `json-insert`, `json-append`, and `json-test`.
+
+```powershell
+$operations = @(
+    [pscustomobject]@{
+        path = 'src/example.txt'
+        kind = 'replace'
+        match = 'old anchor'
+        replacement = 'new text'
+        expectedCount = 1
+    },
+    [pscustomobject]@{
+        path = 'settings.json'
+        kind = 'json-set'
+        pointer = '/features/deckwraith'
+        value = $true
+    },
+    [pscustomobject]@{
+        path = 'settings.json'
+        kind = 'json-append'
+        pointer = '/contributors'
+        value = 'steward'
+    }
+)
+
+$edit = @{
+    RootPath = '/path/to/project'
+    Operation = $operations
+    CommitSubject = 'Adapt the project workflow'
+    CommitBody = 'Update the exact text anchor and structured settings together.'
+}
+Invoke-DwFileEdit @edit
+```
+
+Every anchor count, JSON pointer/test, expected content hash, encoding, and root-relative path is
+checked before publication. Paths cannot cross a symbolic link beneath the edit root. A missing
+anchor or invalid JSON operation leaves every file untouched. The command stages same-directory
+temporary files, rechecks originals for races, restores earlier files if a later publication fails,
+retains recovery backups if restoration cannot complete, and returns per-file before/after hashes.
+Use `expectedHash = 'sha256:…'` for optimistic concurrency or `expectedHash = 'missing'` when
+creating a file.
+
+The optional commit subject and body are returned as an edit-authored proposal. They do not commit
+by themselves; the per-haunt auto-commit policy consumes that proposal when enabled.
+
 ## Desktop development and packaging
 
 Build the renderer and .NET payload:
