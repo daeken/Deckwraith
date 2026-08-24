@@ -187,6 +187,17 @@ preserved. Detached heads, unresolved conflicts, and merge/rebase/cherry-pick/re
 are refused. Commit hooks are disabled for the automatic commit so a hook cannot add unrelated
 paths or publish the commit. Deckwraith never runs `git push` from this policy.
 
+## Desktop appearance
+
+The desktop supports `system`, `dark`, and `light` modes. Appearance is saved in the platform
+desktop preference file alongside the selected deck path, outside the deck and its sensitive Git
+history. On macOS this is `~/Library/Application Support/Deckwraith/desktop.json`.
+
+The appearance dialog also exposes semantic color tokens for background, surfaces, text, muted
+text, accent, borders, danger, and success states. Overrides are validated hex colors and layer over
+the selected built-in palette. Restoring built-in colors removes the overrides without changing the
+selected mode.
+
 ## Desktop development and packaging
 
 Build the renderer and .NET payload:

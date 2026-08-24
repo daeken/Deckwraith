@@ -7,6 +7,13 @@ export type HostStatus = {
   protocolVersion: number;
   eventCursor: number;
   deckPath: string;
+  theme: ThemePreference["theme"];
+  themeTokens: Record<string, string>;
+};
+
+export type ThemePreference = {
+  theme: "system" | "dark" | "light";
+  tokens: Record<string, string>;
 };
 
 export type DeckSelection = {
@@ -82,6 +89,22 @@ export async function selectDeckPath(path: string): Promise<DeckSelection> {
     body: JSON.stringify({ path }),
   });
   const result = (await response.json()) as DeckSelection & { code?: string; message?: string };
+  if (!response.ok) {
+    throw new BridgeError(result.code ?? "transport", result.message ?? response.statusText);
+  }
+  return result;
+}
+
+export async function setThemePreference(
+  theme: ThemePreference["theme"],
+  tokens: Record<string, string>,
+): Promise<ThemePreference> {
+  const response = await fetch("/api/v1/preferences/theme", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ theme, tokens }),
+  });
+  const result = (await response.json()) as ThemePreference & { code?: string; message?: string };
   if (!response.ok) {
     throw new BridgeError(result.code ?? "transport", result.message ?? response.statusText);
   }

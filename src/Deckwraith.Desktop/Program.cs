@@ -54,6 +54,8 @@ app.MapGet("/api/v1/status", () => Results.Json(new
     protocolVersion = HostProtocol.CurrentVersion,
     eventCursor = session.LatestEventCursor,
     deckPath = session.DeckPath,
+    theme = DesktopDeckPreferences.ResolveTheme(),
+    themeTokens = DesktopDeckPreferences.ResolveThemeTokens(),
 }, ProtocolJson.Options));
 
 app.MapPost("/api/v1/deck/pick", async (DeckPickerRequest request) =>
@@ -120,6 +122,28 @@ app.MapPost("/api/v1/deck/select", async (
         await DesktopDeckPreferences.SaveDeckPathAsync(
             selected.DeckPath, cancellationToken).ConfigureAwait(false);
         return Results.Json(selected, ProtocolJson.Options);
+    }
+    catch (DesktopDeckException exception)
+    {
+        return Results.Json(
+            new { code = exception.Code, exception.Message },
+            ProtocolJson.Options,
+            statusCode: StatusCodes.Status400BadRequest);
+    }
+});
+
+app.MapPost("/api/v1/preferences/theme", async (
+    ThemePreferenceRequest request,
+    CancellationToken cancellationToken) =>
+{
+    try
+    {
+        var saved = await DesktopDeckPreferences.SaveThemeAsync(
+            request.Theme,
+            request.Tokens,
+            session.DeckPath,
+            cancellationToken).ConfigureAwait(false);
+        return Results.Json(saved, ProtocolJson.Options);
     }
     catch (DesktopDeckException exception)
     {
@@ -260,6 +284,10 @@ internal sealed record DeckPickerRequest(string? DefaultPath);
 
 internal sealed record DeckSelectionRequest(string Path);
 
+internal sealed record ThemePreferenceRequest(
+    string Theme,
+    IReadOnlyDictionary<string, string>? Tokens);
+
 internal sealed record DeckSelectionResult(string DeckPath, bool Initialized);
 
 internal sealed class DesktopDeckException(string code, string message) : Exception(message)
@@ -373,6 +401,22 @@ internal sealed class DesktopDeckSession : IDisposable
 internal static class DesktopDeckPreferences
 {
     private const string DeckPathEnvironmentVariable = "DECKWRAITH_DECK_PATH";
+    private static readonly HashSet<string> ThemeNames =
+        new(["system", "dark", "light"], StringComparer.Ordinal);
+    private static readonly HashSet<string> ThemeTokenNames = new(
+        [
+            "accent",
+            "background",
+            "border",
+            "danger",
+            "muted",
+            "success",
+            "surface",
+            "surfaceRaised",
+            "text",
+        ],
+        StringComparer.Ordinal);
+    private static readonly SemaphoreSlim PreferenceGate = new(1, 1);
     private static readonly JsonSerializerOptions PreferenceJson = new(JsonSerializerDefaults.Web)
     {
         WriteIndented = true,
@@ -394,7 +438,7 @@ internal static class DesktopDeckPreferences
             return NormalizePath(configured);
         }
 
-        var preference = ReadDeckPath();
+        var preference = ReadPreferences()?.DeckPath;
         if (!string.IsNullOrWhiteSpace(preference))
         {
             return NormalizePath(preference);
@@ -448,9 +492,121 @@ internal static class DesktopDeckPreferences
             ? StringComparer.OrdinalIgnoreCase.Equals(NormalizePath(left), NormalizePath(right))
             : StringComparer.Ordinal.Equals(NormalizePath(left), NormalizePath(right));
 
+    public static string ResolveTheme()
+    {
+        var theme = ReadPreferences()?.Theme;
+        return theme is not null && ThemeNames.Contains(theme) ? theme : "system";
+    }
+
+    public static IReadOnlyDictionary<string, string> ResolveThemeTokens() =>
+        NormalizeThemeTokens(ReadPreferences()?.ThemeTokens);
+
     public static async Task SaveDeckPathAsync(
         string path,
         CancellationToken cancellationToken = default)
+    {
+        await PreferenceGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var current = ReadPreferences();
+            await WritePreferencesAsync(
+                new DesktopPreferences(
+                    NormalizePath(path),
+                    current?.Theme is { } theme && ThemeNames.Contains(theme) ? theme : "system",
+                    NormalizeThemeTokens(current?.ThemeTokens)),
+                cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            PreferenceGate.Release();
+        }
+    }
+
+    public static async Task<object> SaveThemeAsync(
+        string theme,
+        IReadOnlyDictionary<string, string>? tokens,
+        string deckPath,
+        CancellationToken cancellationToken = default)
+    {
+        if (!ThemeNames.Contains(theme))
+        {
+            throw new DesktopDeckException(
+                "invalid-theme", $"Theme '{theme}' must be system, dark, or light.");
+        }
+
+        await PreferenceGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var normalizedTokens = NormalizeThemeTokens(tokens, rejectInvalid: true);
+            await WritePreferencesAsync(
+                new DesktopPreferences(NormalizePath(deckPath), theme, normalizedTokens),
+                cancellationToken).ConfigureAwait(false);
+            return new { theme, tokens = normalizedTokens };
+        }
+        finally
+        {
+            PreferenceGate.Release();
+        }
+    }
+
+    private static DesktopPreferences? ReadPreferences()
+    {
+        var path = PreferencePath();
+        if (!File.Exists(path))
+        {
+            return null;
+        }
+
+        try
+        {
+            return JsonSerializer.Deserialize<DesktopPreferences>(
+                File.ReadAllText(path), PreferenceJson);
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    private static Dictionary<string, string> NormalizeThemeTokens(
+        IReadOnlyDictionary<string, string>? tokens,
+        bool rejectInvalid = false)
+    {
+        var normalized = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var (name, value) in tokens ?? new Dictionary<string, string>())
+        {
+            if (!ThemeTokenNames.Contains(name) || !IsHexColor(value))
+            {
+                if (rejectInvalid)
+                {
+                    throw new DesktopDeckException(
+                        "invalid-theme-token",
+                        $"Theme token '{name}' must be a supported semantic token with a hex color value.");
+                }
+
+                continue;
+            }
+
+            normalized[name] = value.ToLowerInvariant();
+        }
+
+        return normalized;
+    }
+
+    private static bool IsHexColor(string value)
+    {
+        if (value.Length is not (4 or 5 or 7 or 9) || value[0] != '#')
+        {
+            return false;
+        }
+
+        return value.AsSpan(1).IndexOfAnyExcept(
+            "0123456789abcdefABCDEF".AsSpan()) < 0;
+    }
+
+    private static async Task WritePreferencesAsync(
+        DesktopPreferences preferences,
+        CancellationToken cancellationToken)
     {
         var preferencePath = PreferencePath();
         Directory.CreateDirectory(Path.GetDirectoryName(preferencePath)!);
@@ -459,7 +615,7 @@ internal static class DesktopDeckPreferences
         {
             await File.WriteAllTextAsync(
                 temporary,
-                JsonSerializer.Serialize(new DesktopPreferences(NormalizePath(path)), PreferenceJson) + "\n",
+                JsonSerializer.Serialize(preferences, PreferenceJson) + "\n",
                 cancellationToken).ConfigureAwait(false);
             File.Move(temporary, preferencePath, true);
         }
@@ -472,29 +628,13 @@ internal static class DesktopDeckPreferences
         }
     }
 
-    private static string? ReadDeckPath()
-    {
-        var path = PreferencePath();
-        if (!File.Exists(path))
-        {
-            return null;
-        }
-
-        try
-        {
-            return JsonSerializer.Deserialize<DesktopPreferences>(
-                File.ReadAllText(path), PreferenceJson)?.DeckPath;
-        }
-        catch (JsonException)
-        {
-            return null;
-        }
-    }
-
     private static string PreferencePath() => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
         "Deckwraith",
         "desktop.json");
 
-    private sealed record DesktopPreferences(string DeckPath);
+    private sealed record DesktopPreferences(
+        string DeckPath,
+        string Theme = "system",
+        IReadOnlyDictionary<string, string>? ThemeTokens = null);
 }

@@ -11,8 +11,10 @@ import {
   pickProjectFolder,
   query,
   selectDeckPath,
+  setThemePreference,
   subscribe,
 } from "./ipc/bridge";
+import type { ThemePreference } from "./ipc/bridge";
 import type {
   ArchivePage,
   CheckpointSummary,
@@ -40,6 +42,8 @@ export function App() {
   const [events, setEvents] = useState<HostEvent[]>([]);
   const [deckPath, setDeckPath] = useState("");
   const [deckPathDraft, setDeckPathDraft] = useState("");
+  const [theme, setTheme] = useState<ThemePreference["theme"]>("system");
+  const [themeTokens, setThemeTokens] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
@@ -100,11 +104,15 @@ export function App() {
     void assertProtocolCompatible().then((status) => {
       setDeckPath(status.deckPath);
       setDeckPathDraft(status.deckPath);
+      setTheme(status.theme);
+      setThemeTokens(status.themeTokens);
       return refresh();
     }).catch((reason: unknown) => {
       setError(messageOf(reason));
     });
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => applyTheme(theme, themeTokens), [theme, themeTokens]);
 
   useEffect(() => {
     if (!initialized || !deck) return;
@@ -251,6 +259,25 @@ export function App() {
           <span>Deck folder</span>
           <code>{deckPath}</code>
         </div>
+        <ThemeDialog
+          theme={theme}
+          tokens={themeTokens}
+          busy={busy}
+          onSave={async (nextTheme, nextTokens) => {
+            setBusy(true);
+            setError("");
+            try {
+              const saved = await setThemePreference(nextTheme, nextTokens);
+              setTheme(saved.theme);
+              setThemeTokens(saved.tokens);
+            } catch (reason) {
+              setError(messageOf(reason));
+              throw reason;
+            } finally {
+              setBusy(false);
+            }
+          }}
+        />
         <div className="sensitivity">
           <span>Local & sensitive</span>
           Archive and Git history may contain secrets. Deckwraith never publishes them automatically.
@@ -736,6 +763,106 @@ function HauntProjectDialog({ haunt, policy, defaultPath, busy, onSave }: {
   </Dialog.Root>;
 }
 
+const THEME_TOKEN_LABELS = {
+  background: "Background",
+  surface: "Surface",
+  surfaceRaised: "Raised surface",
+  text: "Text",
+  muted: "Muted text",
+  accent: "Accent",
+  border: "Borders",
+  danger: "Danger",
+  success: "Success",
+} as const;
+
+type ThemeTokenName = keyof typeof THEME_TOKEN_LABELS;
+
+const DEFAULT_THEME_TOKENS: Record<"dark" | "light", Record<ThemeTokenName, string>> = {
+  dark: {
+    background: "#090b10",
+    surface: "#101219",
+    surfaceRaised: "#1a1d25",
+    text: "#e8e9ee",
+    muted: "#777a88",
+    accent: "#a394d1",
+    border: "#2f323d",
+    danger: "#d27f75",
+    success: "#8fd7b0",
+  },
+  light: {
+    background: "#f4f1f8",
+    surface: "#ffffff",
+    surfaceRaised: "#ece8f2",
+    text: "#211f27",
+    muted: "#6c6874",
+    accent: "#67589a",
+    border: "#d4cedd",
+    danger: "#a9433b",
+    success: "#2f7a52",
+  },
+};
+
+function ThemeDialog({ theme, tokens, busy, onSave }: {
+  theme: ThemePreference["theme"];
+  tokens: Record<string, string>;
+  busy: boolean;
+  onSave: (theme: ThemePreference["theme"], tokens: Record<string, string>) => Promise<void>;
+}) {
+  const [open, setOpen] = useState(false);
+  const [draftTheme, setDraftTheme] = useState(theme);
+  const [draftTokens, setDraftTokens] = useState<Record<string, string>>(tokens);
+  const [localError, setLocalError] = useState("");
+  useEffect(() => {
+    if (open) return;
+    setDraftTheme(theme);
+    setDraftTokens(tokens);
+    setLocalError("");
+  }, [open, theme, tokens]);
+
+  const palette = DEFAULT_THEME_TOKENS[draftTheme === "light" ? "light" : "dark"];
+  return <Dialog.Root open={open} onOpenChange={setOpen}>
+    <Dialog.Trigger asChild>
+      <button className="quiet theme-settings-button">
+        <span>Appearance</span><small>{draftTheme[0].toUpperCase() + draftTheme.slice(1)}</small>
+      </button>
+    </Dialog.Trigger>
+    <Dialog.Portal>
+      <Dialog.Overlay className="dialog-overlay" />
+      <Dialog.Content className="dialog-content theme-dialog">
+        <Dialog.Title>Appearance</Dialog.Title>
+        <Dialog.Description>Follow the Mac, choose a built-in palette, or tune semantic colors for this installation.</Dialog.Description>
+        <div className="project-form">
+          <label>Mode<select value={draftTheme} onChange={(event) => setDraftTheme(event.target.value as ThemePreference["theme"])}>
+            <option value="system">Follow system</option>
+            <option value="dark">Dark</option>
+            <option value="light">Light</option>
+          </select></label>
+          <div className="theme-token-grid">
+            {(Object.keys(THEME_TOKEN_LABELS) as ThemeTokenName[]).map((name) => <label key={name}>
+              <span>{THEME_TOKEN_LABELS[name]}</span>
+              <input
+                type="color"
+                value={draftTokens[name] ?? palette[name]}
+                onChange={(event) => setDraftTokens((current) => ({ ...current, [name]: event.target.value }))}
+              />
+            </label>)}
+          </div>
+          <button className="quiet reset-theme" disabled={Object.keys(draftTokens).length === 0} onClick={() => setDraftTokens({})}>Restore built-in colors</button>
+          {localError && <div className="setup-error"><b>That didn’t work.</b> {localError}</div>}
+        </div>
+        <div className="action-row">
+          <Dialog.Close asChild><button disabled={busy}>Cancel</button></Dialog.Close>
+          <button className="primary" disabled={busy} onClick={() => {
+            void onSave(draftTheme, draftTokens)
+              .then(() => setOpen(false))
+              .catch((reason: unknown) => setLocalError(messageOf(reason)));
+          }}>Save appearance</button>
+        </div>
+      </Dialog.Content>
+    </Dialog.Portal>
+  </Dialog.Root>;
+}
+
 function DeckOnboarding({ path, busy, error, onPathChange, onChooseFolder, onInitialize }: {
   path: string;
   busy: boolean;
@@ -776,3 +903,13 @@ function StatusPill({ value }: { value: string }) { return <span className={clsx
 function shortId(value: string) { return value.slice(0, 10); }
 function formatDate(value: string) { return new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(new Date(value)); }
 function messageOf(value: unknown) { return value instanceof Error ? value.message : String(value); }
+
+function applyTheme(theme: ThemePreference["theme"], tokens: Record<string, string>) {
+  const root = document.documentElement;
+  root.dataset.theme = theme;
+  for (const name of Object.keys(THEME_TOKEN_LABELS) as ThemeTokenName[]) {
+    const property = `--dw-${name.replace(/[A-Z]/g, (character) => `-${character.toLowerCase()}`)}`;
+    if (tokens[name]) root.style.setProperty(property, tokens[name]);
+    else root.style.removeProperty(property);
+  }
+}
