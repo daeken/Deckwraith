@@ -26,10 +26,6 @@ public sealed class JsonDeckStateStore : IDeckStateStore
     {
         Directory.CreateDirectory(RootPath);
         SensitiveFilePermissions.RestrictDirectory(RootPath);
-        if (File.Exists(_deckManifestPath))
-        {
-            throw new DeckStateException($"A deck is already initialized at '{RootPath}'.");
-        }
 
         foreach (var directory in new[]
         {
@@ -46,12 +42,20 @@ public sealed class JsonDeckStateStore : IDeckStateStore
             SensitiveFilePermissions.RestrictDirectory(path);
         }
 
-        await AtomicJsonFile.WriteAsync(
-            _deckManifestPath, DeckManifest.Create(now), cancellationToken).ConfigureAwait(false);
-        await AtomicJsonFile.WriteAsync(
-            Path.Combine(RootPath, "policy.json"),
-            DeckPolicy.CreateDefault(),
-            cancellationToken).ConfigureAwait(false);
+        if (!File.Exists(_deckManifestPath))
+        {
+            await AtomicJsonFile.WriteAsync(
+                _deckManifestPath, DeckManifest.Create(now), cancellationToken).ConfigureAwait(false);
+        }
+
+        var policyPath = Path.Combine(RootPath, "policy.json");
+        if (!File.Exists(policyPath))
+        {
+            await AtomicJsonFile.WriteAsync(
+                policyPath,
+                DeckPolicy.CreateDefault(),
+                cancellationToken).ConfigureAwait(false);
+        }
     }
 
     public async Task<IReadOnlyList<RenameIntent>> RecoverPendingRenamesAsync(
@@ -164,6 +168,24 @@ public sealed class JsonDeckStateStore : IDeckStateStore
         EnsureInitialized();
         var manifest = await ReadManifestAsync(cancellationToken).ConfigureAwait(false);
         return Resolve(name, "haunts", manifest.HauntAliases, "haunt");
+    }
+
+    public async Task<CanonicalName?> TryResolveWraithAsync(
+        CanonicalName name,
+        CancellationToken cancellationToken)
+    {
+        EnsureInitialized();
+        var manifest = await ReadManifestAsync(cancellationToken).ConfigureAwait(false);
+        return TryResolve(name, "agents", manifest.WraithAliases);
+    }
+
+    public async Task<CanonicalName?> TryResolveHauntAsync(
+        CanonicalName name,
+        CancellationToken cancellationToken)
+    {
+        EnsureInitialized();
+        var manifest = await ReadManifestAsync(cancellationToken).ConfigureAwait(false);
+        return TryResolve(name, "haunts", manifest.HauntAliases);
     }
 
     public async ValueTask<IAsyncDisposable> AcquireWraithLifecycleLeaseAsync(
@@ -548,6 +570,28 @@ public sealed class JsonDeckStateStore : IDeckStateStore
         }
 
         throw new DeckStateException($"No {noun} resolves from '{requested}'.");
+    }
+
+    private CanonicalName? TryResolve(
+        CanonicalName requested,
+        string collection,
+        IReadOnlyDictionary<string, string> aliases)
+    {
+        if (Directory.Exists(EntityPath(collection, requested)))
+        {
+            return requested;
+        }
+
+        if (aliases.TryGetValue(requested.Value, out var target))
+        {
+            var resolved = CanonicalName.Parse(target);
+            if (Directory.Exists(EntityPath(collection, resolved)))
+            {
+                return resolved;
+            }
+        }
+
+        return null;
     }
 
     private void EnsureNameAvailable(

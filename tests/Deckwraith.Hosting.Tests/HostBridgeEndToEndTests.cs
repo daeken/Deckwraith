@@ -172,8 +172,14 @@ public sealed class HostBridgeEndToEndTests
                 var deck = await reopened.ExecuteAsync(Query(
                     "deck.snapshot", new { }, "reopened-deck"));
                 AssertSuccess(deck);
-                Assert.Equal(1, deck.Result!.Value.GetProperty("wraiths").GetArrayLength());
-                Assert.Equal(1, deck.Result.Value.GetProperty("haunts").GetArrayLength());
+                Assert.Equal(2, deck.Result!.Value.GetProperty("wraiths").GetArrayLength());
+                Assert.Equal(2, deck.Result.Value.GetProperty("haunts").GetArrayLength());
+                Assert.Contains(
+                    deck.Result.Value.GetProperty("wraiths").EnumerateArray(),
+                    wraith => wraith.GetProperty("name").GetString() == "steward");
+                Assert.Contains(
+                    deck.Result.Value.GetProperty("haunts").EnumerateArray(),
+                    haunt => haunt.GetProperty("name").GetString() == "setup");
                 Assert.Contains(
                     deck.Result.Value.GetProperty("providers").EnumerateArray(),
                     provider => provider.GetProperty("providerId").GetString() == "fake");

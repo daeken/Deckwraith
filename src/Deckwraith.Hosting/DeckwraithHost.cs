@@ -381,11 +381,7 @@ public sealed class DeckwraithHost : IDisposable
         JsonElement payload,
         CancellationToken cancellationToken) => name switch
     {
-        "deck.initialize" => new
-        {
-            rootPath = _rootPath,
-            commitId = await _state.InitializeAsync(cancellationToken).ConfigureAwait(false),
-        },
+        "deck.initialize" => await InitializeDeckAsync(cancellationToken).ConfigureAwait(false),
         "wraith.create" => await _state.CreateWraithAsync(
             Read<CreateNamePayload>(payload).Name, cancellationToken).ConfigureAwait(false),
         "wraith.archive" => await _state.ArchiveWraithAsync(
@@ -412,6 +408,19 @@ public sealed class DeckwraithHost : IDisposable
             Read<ReversePayload>(payload).Commit, cancellationToken).ConfigureAwait(false),
         _ => throw new UnreachableException(),
     };
+
+    private async Task<object> InitializeDeckAsync(CancellationToken cancellationToken)
+    {
+        var initialized = await _state.InitializeWithSetupAsync(cancellationToken)
+            .ConfigureAwait(false);
+        return new
+        {
+            rootPath = _rootPath,
+            commitId = initialized.CommitId,
+            setupWraith = initialized.SetupWraith,
+            setupHaunt = initialized.SetupHaunt,
+        };
+    }
 
     private async Task<object?> DispatchQueryAsync(
         string name,

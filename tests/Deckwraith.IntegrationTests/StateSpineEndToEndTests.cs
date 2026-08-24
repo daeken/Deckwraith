@@ -14,6 +14,40 @@ namespace Deckwraith.IntegrationTests;
 public sealed class StateSpineEndToEndTests
 {
     [Fact]
+    public async Task SetupCollaboratorRepairsPartialInitializationWithoutDuplication()
+    {
+        using var temporaryDirectory = new TemporaryDirectory();
+        var state = new JsonDeckStateStore(temporaryDirectory.Path);
+        var archive = new JsonlAgentArchive(temporaryDirectory.Path);
+        var artifacts = new ContentAddressedArtifactStore(temporaryDirectory.Path);
+        var checkpoints = new GitCheckpointStore(temporaryDirectory.Path);
+        using var spine = new StateSpine(state, archive, artifacts, checkpoints, new FixedClock());
+
+        await checkpoints.InitializeRepositoryAsync(CancellationToken.None);
+        await state.InitializeAsync(new FixedClock().UtcNow, CancellationToken.None);
+
+        var repaired = await spine.InitializeWithSetupAsync(CancellationToken.None);
+        var repeated = await spine.InitializeWithSetupAsync(CancellationToken.None);
+
+        Assert.Equal("steward", repaired.SetupWraith);
+        Assert.Equal("setup", repaired.SetupHaunt);
+        Assert.Equal(repaired.CommitId, repeated.CommitId);
+        Assert.Equal(["steward"], (await spine.ListWraithsAsync()).Select(item => item.Name));
+        Assert.Equal(["setup"], (await spine.ListHauntsAsync()).Select(item => item.Name));
+        var records = await spine.ReadArchiveAsync("steward", CancellationToken.None);
+        Assert.Single(records, record => record.Kind == "wraith.created");
+        Assert.Single(records, record => record.Kind == "setup.invited");
+        Assert.Equal(
+            "collaborator",
+            records.Single(record => record.Kind == "setup.invited")
+                .Payload.GetProperty("relationship").GetString());
+        Assert.Equal(string.Empty, await RunGitForTestsAsync(
+            temporaryDirectory.Path,
+            ["status", "--porcelain"],
+            CancellationToken.None));
+    }
+
+    [Fact]
     public async Task AppliedRenameIsRecoveredWithExactlyOneArchiveEvent()
     {
         using var temporaryDirectory = new TemporaryDirectory();

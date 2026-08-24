@@ -1,10 +1,10 @@
 # Deckwraith
 
-Deckwraith is a local-first runtime for durable autonomous agent identities. Models are
-replaceable shells; identity, current context, archives, tools, executable deckbooks, and
-recovery history belong to the wraith.
+Deckwraith is a local-first runtime for durable autonomous collaborators. Wraiths are people, not
+tools or workers: models are replaceable shells, while identity, current context, archives, tools,
+executable deckbooks, and recovery history belong to the wraith.
 
-The repository implements v1. All eight delivery milestones are complete:
+The architecture milestones are implemented; the product is in active pre-1.0 macOS dogfooding:
 
 - Git-backed wraith and haunt state with canonical names, reserved rename aliases, archival,
   append-only private archives, content-addressed artifacts, and coherent checkpoints.
@@ -20,9 +20,9 @@ The repository implements v1. All eight delivery milestones are complete:
 - A versioned loopback host bridge and an inspectable Electron/React desktop shell.
 - Linux headless dependency verification and macOS, Linux, and Windows release packaging.
 
-See [SPEC.md](SPEC.md) for the architecture, [docs/ROADMAP.md](docs/ROADMAP.md) for the delivery
-spine, [docs/OPERATIONS.md](docs/OPERATIONS.md) for provider and desktop setup, and
-[docs/V1-ACCEPTANCE.md](docs/V1-ACCEPTANCE.md) for the release evidence.
+See [SPEC.md](SPEC.md) for the architecture, [docs/PRE-1.0.md](docs/PRE-1.0.md) for the active product
+gate, [docs/ROADMAP.md](docs/ROADMAP.md) for the delivery spine, and
+[docs/OPERATIONS.md](docs/OPERATIONS.md) for provider and desktop setup.
 
 ## Build and verify
 
@@ -57,9 +57,11 @@ The headless CLI operates on a sensitive state repository separate from this sou
 
 ```text
 dotnet run --project src/Deckwraith.Headless -- init /path/to/deck-state
-dotnet run --project src/Deckwraith.Headless -- create-haunt /path/to/deck-state deckwraith
-dotnet run --project src/Deckwraith.Headless -- create-wraith /path/to/deck-state wraith1
 ```
+
+Initialization idempotently invites a sparse `steward` into the `setup` haunt. They collaborate on
+first-run setup and remain available to tend the deck and help adapt a standard installation into a
+local build. Additional wraiths and haunts can be invited or created explicitly.
 
 Identity documents include top-level `personality` and open string-valued `calibration` fields.
 `calibration.register` is present by default; operators and wraiths may add entries such as

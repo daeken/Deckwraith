@@ -173,7 +173,7 @@ export function App() {
       <aside className="sidebar">
         <div className="brand">
           <div className="brand-mark">DW</div>
-          <div><b>Deckwraith</b><span>durable agent runtime</span></div>
+          <div><b>Deckwraith</b><span>durable collaborator runtime</span></div>
         </div>
         <div className="section-label">Wraiths</div>
         <nav className="wraith-list">
@@ -189,8 +189,8 @@ export function App() {
           ))}
         </nav>
         <CreateEntityDialog
-          label="New wraith"
-          title="Create a durable identity"
+          label="Invite a wraith"
+          title="Begin a durable collaboration"
           placeholder="vesper"
           onCreate={(name) => mutate(async () => {
             await command("wraith.create", { name });
@@ -302,8 +302,8 @@ export function App() {
           </Tabs.Root>
         ) : (
           <div className="empty-panel">
-            <h2>Create the first wraith</h2>
-            <p>A wraith owns its identity, archive, tools, notebook, and continuity across model shells.</p>
+            <h2>Invite the first wraith</h2>
+            <p>A wraith is a collaborator who owns their identity, archive, tools, notebook, and continuity across model shells.</p>
           </div>
         )}
       </main>

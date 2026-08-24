@@ -9,6 +9,11 @@ namespace Deckwraith.Application.State;
 
 public sealed record StateMutation<T>(T Value, string CommitId);
 
+public sealed record DeckInitialization(
+    string CommitId,
+    string SetupWraith,
+    string SetupHaunt);
+
 /// <summary>Coordinates coherent milestone-one mutations across files, archives, and Git.</summary>
 public sealed class StateSpine : IDisposable
 {
@@ -42,6 +47,80 @@ public sealed class StateSpine : IDisposable
             await _state.InitializeAsync(_clock.UtcNow, cancellationToken).ConfigureAwait(false);
             return await _checkpoints.CheckpointAsync(
                 "deck-initialized", null, null, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    public async Task<DeckInitialization> InitializeWithSetupAsync(
+        CancellationToken cancellationToken = default)
+    {
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            await _checkpoints.InitializeRepositoryAsync(cancellationToken).ConfigureAwait(false);
+            await _state.InitializeAsync(_clock.UtcNow, cancellationToken).ConfigureAwait(false);
+
+            var requestedWraith = CanonicalName.Parse("steward");
+            var requestedHaunt = CanonicalName.Parse("setup");
+            var setupWraith = await _state.TryResolveWraithAsync(
+                requestedWraith, cancellationToken).ConfigureAwait(false);
+            if (setupWraith is null)
+            {
+                await _state.CreateWraithAsync(
+                    requestedWraith, _clock.UtcNow, cancellationToken).ConfigureAwait(false);
+                setupWraith = requestedWraith;
+            }
+
+            var setupHaunt = await _state.TryResolveHauntAsync(
+                requestedHaunt, cancellationToken).ConfigureAwait(false);
+            if (setupHaunt is null)
+            {
+                await _state.CreateHauntAsync(
+                    requestedHaunt, _clock.UtcNow, cancellationToken).ConfigureAwait(false);
+                setupHaunt = requestedHaunt;
+            }
+
+            var records = await _archive.ReadAllAsync(
+                setupWraith.Value, cancellationToken).ConfigureAwait(false);
+            if (!records.Any(record => record.Kind == "wraith.created"))
+            {
+                await _archive.AppendAsync(
+                    Event(setupWraith.Value, "wraith.created", new
+                    {
+                        name = setupWraith.Value.Value,
+                        invitedBy = "deck-initialization",
+                    }),
+                    cancellationToken).ConfigureAwait(false);
+            }
+
+            if (!records.Any(record => record.Kind == "setup.invited"))
+            {
+                await _archive.AppendAsync(
+                    Event(
+                        setupWraith.Value,
+                        "setup.invited",
+                        new
+                        {
+                            haunt = setupHaunt.Value.Value,
+                            purpose = "Collaborate on setup, tend the deck, and help adapt Deckwraith to the people using it.",
+                            relationship = "collaborator",
+                        },
+                        setupHaunt.Value),
+                    cancellationToken).ConfigureAwait(false);
+            }
+
+            var commit = await _checkpoints.CheckpointAsync(
+                "deck-initialized-with-setup-collaborator",
+                setupWraith.Value,
+                setupHaunt.Value,
+                cancellationToken).ConfigureAwait(false);
+            return new DeckInitialization(
+                commit,
+                setupWraith.Value.Value,
+                setupHaunt.Value.Value);
         }
         finally
         {

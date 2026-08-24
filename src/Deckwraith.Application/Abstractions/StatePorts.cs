@@ -31,6 +31,14 @@ public interface IDeckStateStore
 
     Task<CanonicalName> ResolveHauntAsync(CanonicalName name, CancellationToken cancellationToken);
 
+    Task<CanonicalName?> TryResolveWraithAsync(
+        CanonicalName name,
+        CancellationToken cancellationToken);
+
+    Task<CanonicalName?> TryResolveHauntAsync(
+        CanonicalName name,
+        CancellationToken cancellationToken);
+
     ValueTask<IAsyncDisposable> AcquireWraithLifecycleLeaseAsync(
         CanonicalName name,
         CancellationToken cancellationToken);

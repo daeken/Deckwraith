@@ -57,11 +57,8 @@ internal static class DeckwraithCli
             using var state = DeckwraithPersistence.CreateStateSpine(rootPath);
             object result = command switch
             {
-                "init" when arguments.Length == 2 => new
-                {
-                    rootPath = Path.GetFullPath(rootPath),
-                    commitId = await state.InitializeAsync(cancellationToken).ConfigureAwait(false),
-                },
+                "init" when arguments.Length == 2 => await InitializeDeckAsync(
+                    state, rootPath, cancellationToken).ConfigureAwait(false),
                 "create-wraith" when arguments.Length == 3 =>
                     await state.CreateWraithAsync(arguments[2], cancellationToken).ConfigureAwait(false),
                 "archive-wraith" when arguments.Length == 3 =>
@@ -157,6 +154,22 @@ internal static class DeckwraithCli
             Console.Error.WriteLine(exception.Message);
             return 1;
         }
+    }
+
+    private static async Task<object> InitializeDeckAsync(
+        StateSpine state,
+        string rootPath,
+        CancellationToken cancellationToken)
+    {
+        var initialized = await state.InitializeWithSetupAsync(cancellationToken)
+            .ConfigureAwait(false);
+        return new
+        {
+            rootPath = Path.GetFullPath(rootPath),
+            commitId = initialized.CommitId,
+            setupWraith = initialized.SetupWraith,
+            setupHaunt = initialized.SetupHaunt,
+        };
     }
 
     private static async Task<object> StoreArtifactAsync(
