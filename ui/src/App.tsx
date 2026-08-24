@@ -153,7 +153,7 @@ export function App() {
       deck.eventCursor,
       (event) => {
         setEvents((current) => [...current.slice(-79), event]);
-        scheduleEventRefresh();
+        if (eventChangesSnapshot(event)) scheduleEventRefresh();
       },
       refresh,
     );
@@ -1413,6 +1413,20 @@ function formatBytes(value: number) {
 function messageOf(value: unknown) { return value instanceof Error ? value.message : String(value); }
 function isAbortError(value: unknown) {
   return value instanceof DOMException && value.name === "AbortError";
+}
+
+function eventChangesSnapshot(event: HostEvent) {
+  if (["host.request.completed", "host.request.failed"].includes(event.name)) {
+    return event.payload.kind === "command";
+  }
+  return [
+    "model.started",
+    "model.completed",
+    "model.error",
+    "kernel.completed",
+    "kernel.error",
+    "recovery.completed",
+  ].includes(event.name);
 }
 
 function applyTheme(theme: ThemePreference["theme"], tokens: Record<string, string>) {
