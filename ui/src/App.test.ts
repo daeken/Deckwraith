@@ -117,6 +117,33 @@ describe("activity presentation", () => {
     ]);
   });
 
+  it("collapses a failed kernel completion into its informative cell error", () => {
+    const started = hostEvent(30, "kernel.started", {
+      executionId: "execution-one",
+      cellName: "atomic-edit-proof",
+    });
+    const error = hostEvent(31, "kernel.error", {
+      executionId: "execution-one",
+      cellName: "atomic-edit-proof",
+      message: "The edit batch was rolled back.",
+    });
+    const completed = hostEvent(32, "kernel.completed", {
+      executionId: "execution-one",
+      cellName: "atomic-edit-proof",
+      status: "failed",
+    });
+    const otherFailure = hostEvent(33, "kernel.completed", {
+      executionId: "execution-two",
+      cellName: "other-cell",
+      status: "failed",
+    });
+
+    expect(visibleActivity([started, error, completed, otherFailure])).toEqual([
+      error,
+      otherFailure,
+    ]);
+  });
+
   it("explains cold-start recovery instead of exposing its raw payload", () => {
     const recovery = hostEvent(9, "recovery.completed", {
       wraith: "steward",

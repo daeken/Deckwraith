@@ -1053,6 +1053,7 @@ export function visibleActivity(events: HostEvent[]) {
   return events.filter((event) => !isExpectedOnboardingProbe(event) &&
     !isEmptyProjectionRecovery(event) &&
     !isDuplicateModelFailure(event, events) &&
+    !isDuplicateKernelFailure(event, events) &&
     ACTIVITY_EVENTS.has(event.name) &&
     (!LIFECYCLE_START_EVENTS.has(event.name) || activeStartCursors.has(event.cursor)));
 }
@@ -1089,6 +1090,17 @@ function isDuplicateModelFailure(event: HostEvent, events: HostEvent[]) {
     candidate.cursor >= event.cursor - 20 &&
     payloadString(candidate, "code") === code &&
     payloadString(candidate, "message") === message);
+}
+
+function isDuplicateKernelFailure(event: HostEvent, events: HostEvent[]) {
+  if (event.name !== "kernel.completed" || payloadString(event, "status") !== "failed") {
+    return false;
+  }
+  const key = kernelLifecycleKey(event);
+  return events.some((candidate) => candidate.name === "kernel.error" &&
+    candidate.cursor < event.cursor &&
+    candidate.cursor >= event.cursor - 20 &&
+    kernelLifecycleKey(candidate) === key);
 }
 
 function activeLifecycleStarts(
