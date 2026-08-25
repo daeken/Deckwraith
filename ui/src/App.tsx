@@ -808,11 +808,11 @@ function ContextItemView({ item, wraithLabel }: { item: ContextItem; wraithLabel
   </details>;
 }
 
-function isTerminalRun(run: RunDocument) {
+export function isTerminalRun(run: RunDocument) {
   return ["completed", "cancelled", "failed"].includes(run.status);
 }
 
-function conversationMessage(message: string, attachments: ConversationAttachment[]) {
+export function conversationMessage(message: string, attachments: ConversationAttachment[]) {
   if (attachments.length === 0) return message;
   const references = attachments.map((attachment) =>
     `- ${attachment.fileName} (${attachment.mediaType ?? "application/octet-stream"}, ${attachment.length} bytes): ${attachment.hash}`).join("\n");
@@ -987,7 +987,7 @@ const KERNEL_START_EVENTS = new Set(["kernel.started"]);
 const KERNEL_TERMINAL_EVENTS = new Set(["kernel.completed"]);
 const LIFECYCLE_START_EVENTS = new Set([...MODEL_START_EVENTS, ...KERNEL_START_EVENTS]);
 
-function describeActivity(event: HostEvent): { title: string; detail: string; tone?: string } {
+export function describeActivity(event: HostEvent): { title: string; detail: string; tone?: string } {
   const wraith = payloadString(event, "wraith");
   const run = payloadString(event, "runId");
   const subject = [wraith, run && shortId(run)].filter(Boolean).join(" · ");
@@ -1021,7 +1021,7 @@ function describeActivity(event: HostEvent): { title: string; detail: string; to
   }
 }
 
-function appendHostEvent(events: HostEvent[], event: HostEvent) {
+export function appendHostEvent(events: HostEvent[], event: HostEvent) {
   const next = [...events, event];
   const recent = next.slice(-80);
   if (recent.length === next.length) return next;
@@ -1033,7 +1033,7 @@ function appendHostEvent(events: HostEvent[], event: HostEvent) {
   return [...activeStarts, ...recent].sort((left, right) => left.cursor - right.cursor);
 }
 
-function visibleActivity(events: HostEvent[]) {
+export function visibleActivity(events: HostEvent[]) {
   const activeStartCursors = new Set([
     ...activeLifecycleStarts(events, MODEL_START_EVENTS, MODEL_TERMINAL_EVENTS, modelLifecycleKey),
     ...activeLifecycleStarts(events, KERNEL_START_EVENTS, KERNEL_TERMINAL_EVENTS, kernelLifecycleKey),
@@ -1527,10 +1527,13 @@ function PanelHeading({ eyebrow, title, detail }: { eyebrow: string; title: stri
 
 function Metric({ label, value }: { label: string; value: string }) { return <div className="metric"><span>{label}</span><b>{value}</b></div>; }
 function StatusPill({ value }: { value: string }) {
-  const label = value
+  return <span className={clsx("status-pill", value)}>{statusLabel(value)}</span>;
+}
+export function statusLabel(value: string) {
+  return value
     .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
-    .replace(/[-_]+/g, " ");
-  return <span className={clsx("status-pill", value)}>{label}</span>;
+    .replace(/[-_]+/g, " ")
+    .toLowerCase();
 }
 function providerStateLabel(value: string) {
   return ({
@@ -1555,7 +1558,7 @@ function isAbortError(value: unknown) {
   return value instanceof DOMException && value.name === "AbortError";
 }
 
-function eventChangesSnapshot(event: HostEvent) {
+export function eventChangesSnapshot(event: HostEvent) {
   if (["host.request.completed", "host.request.failed"].includes(event.name)) {
     return event.payload.kind === "command";
   }
