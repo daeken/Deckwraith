@@ -4,6 +4,7 @@ import {
   conversationMessage,
   describeActivity,
   eventChangesSnapshot,
+  reconcileProviderAccess,
   statusLabel,
   visibleActivity,
 } from "./App";
@@ -136,5 +137,39 @@ describe("snapshot refresh classification", () => {
     expect(eventChangesSnapshot(hostEvent(2, "host.request.completed", { kind: "query" }))).toBe(false);
     expect(eventChangesSnapshot(hostEvent(3, "model.completed"))).toBe(true);
     expect(eventChangesSnapshot(hostEvent(4, "model.text-delta"))).toBe(false);
+  });
+
+  it("replaces stale provider readiness with the host's latest authentication state", () => {
+    const ready = {
+      providerId: "openai-codex-subscription",
+      capabilities: {
+        streaming: true,
+        nativeToolCalling: true,
+        images: false,
+        reasoningControls: true,
+        conversationContinuation: false,
+      },
+      authentication: {
+        providerId: "openai-codex-subscription",
+        displayName: "OpenAI · ChatGPT subscription",
+        accessKind: "subscription" as const,
+        state: "ready" as const,
+        message: "Stored credentials exist.",
+        expiresAt: "2026-09-03T07:35:14Z",
+        accountLabel: "sera@example.test",
+        credentialSource: null,
+      },
+    };
+    const rejected = {
+      ...ready,
+      authentication: {
+        ...ready.authentication,
+        state: "rejected" as const,
+        message: "Reconnect the account.",
+      },
+    };
+
+    expect(reconcileProviderAccess([ready], [ready], [rejected])).toEqual([rejected]);
+    expect(reconcileProviderAccess([ready], [rejected], null)).toEqual([rejected]);
   });
 });

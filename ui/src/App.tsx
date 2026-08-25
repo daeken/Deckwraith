@@ -81,14 +81,16 @@ export function App() {
 
   const refresh = useCallback(async (dismissError = false) => {
     try {
+      const providerRequest = readProviderSnapshots().catch(() => null);
       const nextDeck = await query<DeckSnapshot>("deck.snapshot");
       setInitialized(true);
       setDeck(nextDeck);
-      setProviderAccess((current) => nextDeck.providers.map((provider) => ({
-        ...provider,
-        authentication: current.find((item) => item.providerId === provider.providerId)
-          ?.authentication ?? null,
-      })));
+      const nextProviders = await providerRequest;
+      setProviderAccess((current) => reconcileProviderAccess(
+        nextDeck.providers,
+        current,
+        nextProviders,
+      ));
       const activeWraiths = nextDeck.wraiths.filter((item) => !item.archivedAt);
       const preferredWraith = selectedWraithRef.current;
       const preferredHaunt = selectedHauntRef.current;
@@ -1571,6 +1573,18 @@ export function eventChangesSnapshot(event: HostEvent) {
     "kernel.error",
     "recovery.completed",
   ].includes(event.name);
+}
+
+export function reconcileProviderAccess(
+  deckProviders: ProviderSnapshot[],
+  current: ProviderSnapshot[],
+  refreshed: ProviderSnapshot[] | null,
+) {
+  return refreshed ?? deckProviders.map((provider) => ({
+    ...provider,
+    authentication: current.find((item) => item.providerId === provider.providerId)
+      ?.authentication ?? null,
+  }));
 }
 
 function applyTheme(theme: ThemePreference["theme"], tokens: Record<string, string>) {
