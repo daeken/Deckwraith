@@ -127,8 +127,10 @@ public sealed class OpenAiSubscriptionProvider : IModelProvider, IProviderAuthen
 
                 if (!receivedResponse.IsSuccessStatusCode)
                 {
-                    var detail = await ProviderHttp.ReadErrorAsync(receivedResponse, cancellationToken)
-                        .ConfigureAwait(false);
+                    var detail = await ProviderHttp.ReadErrorAsync(
+                        receivedResponse,
+                        cancellationToken,
+                        session!.AccessToken).ConfigureAwait(false);
                     var rejected = receivedResponse.StatusCode is HttpStatusCode.Unauthorized or
                         HttpStatusCode.Forbidden;
                     var messageText = rejected

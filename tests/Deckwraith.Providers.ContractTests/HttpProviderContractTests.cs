@@ -121,6 +121,45 @@ public sealed class HttpProviderContractTests
     }
 
     [Fact]
+    public async Task ApiProvidersRedactCredentialsEchoedByErrorResponses()
+    {
+        const string responseBody = """
+            {"error":{"message":"Credential test-secret was rejected."}}
+            """;
+        using var openAiCredential = new EnvironmentCredential("openai-redaction-key");
+        using var anthropicCredential = new EnvironmentCredential("anthropic-redaction-key");
+        using var googleCredential = new EnvironmentCredential("google-redaction-key");
+        var openAi = new OpenAICompatibleProvider(
+            new OpenAICompatibleProviderOptions(
+                new Uri("https://openai.test/"),
+                openAiCredential.Name,
+                ProviderId: "xai-api"),
+            new HttpClient(new RecordingHandler(responseBody, HttpStatusCode.BadRequest)));
+        var anthropic = new AnthropicProvider(
+            new AnthropicProviderOptions(
+                new Uri("https://anthropic.test/"),
+                anthropicCredential.Name),
+            new HttpClient(new RecordingHandler(responseBody, HttpStatusCode.BadRequest)));
+        var google = new GoogleGeminiProvider(
+            new GoogleGeminiProviderOptions(
+                new Uri("https://google.test/"),
+                googleCredential.Name),
+            new HttpClient(new RecordingHandler(responseBody, HttpStatusCode.BadRequest)));
+
+        foreach (var events in new[]
+        {
+            await CollectAsync(openAi, CreateRequest("xai-api")),
+            await CollectAsync(anthropic, CreateRequest("anthropic")),
+            await CollectAsync(google, CreateRequest("google-gemini")),
+        })
+        {
+            var error = Assert.IsType<ModelProviderError>(Assert.Single(events));
+            Assert.Equal("Credential [redacted] was rejected.", error.Message);
+            Assert.DoesNotContain("test-secret", error.Message, StringComparison.Ordinal);
+        }
+    }
+
+    [Fact]
     public async Task GoogleMapsGeminiStreamToCanonicalEvents()
     {
         using var credential = new EnvironmentCredential("google-test-key");
@@ -215,7 +254,9 @@ public sealed class HttpProviderContractTests
         public void Dispose() => Environment.SetEnvironmentVariable(Name, null);
     }
 
-    private sealed class RecordingHandler(string responseBody) : HttpMessageHandler
+    private sealed class RecordingHandler(
+        string responseBody,
+        HttpStatusCode statusCode = HttpStatusCode.OK) : HttpMessageHandler
     {
         public string RequestBody { get; private set; } = string.Empty;
 
@@ -239,7 +280,7 @@ public sealed class HttpProviderContractTests
                 RequestHeaders[header.Key] = string.Join(",", header.Value);
             }
 
-            return new HttpResponseMessage(HttpStatusCode.OK)
+            return new HttpResponseMessage(statusCode)
             {
                 Content = new StringContent(responseBody, Encoding.UTF8, "text/event-stream"),
             };

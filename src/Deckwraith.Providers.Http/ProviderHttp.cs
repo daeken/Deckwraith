@@ -79,7 +79,8 @@ public static class ProviderHttp
 
     public static async Task<string> ReadErrorAsync(
         HttpResponseMessage response,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        params string?[] knownSecrets)
     {
         var body = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
         if (body.Length > 4096)
@@ -95,7 +96,7 @@ public static class ProviderHttp
             {
                 if (root.TryGetProperty(pointer, out var value) && value.ValueKind is JsonValueKind.String)
                 {
-                    return value.GetString()!;
+                    return RedactKnownSecrets(value.GetString()!, knownSecrets);
                 }
             }
 
@@ -104,16 +105,30 @@ public static class ProviderHttp
                 error.TryGetProperty("message", out var message) &&
                 message.ValueKind is JsonValueKind.String)
             {
-                return message.GetString()!;
+                return RedactKnownSecrets(message.GetString()!, knownSecrets);
             }
         }
         catch (JsonException)
         {
         }
 
-        return string.IsNullOrWhiteSpace(body)
+        return RedactKnownSecrets(string.IsNullOrWhiteSpace(body)
             ? $"HTTP {(int)response.StatusCode} ({response.ReasonPhrase})"
-            : body;
+            : body, knownSecrets);
+    }
+
+    public static string RedactKnownSecrets(string value, params string?[] knownSecrets)
+    {
+        ArgumentNullException.ThrowIfNull(value);
+        foreach (var secret in knownSecrets
+            .Where(secret => !string.IsNullOrEmpty(secret))
+            .Distinct(StringComparer.Ordinal)
+            .OrderByDescending(secret => secret!.Length))
+        {
+            value = value.Replace(secret!, "[redacted]", StringComparison.Ordinal);
+        }
+
+        return value;
     }
 
     public static async IAsyncEnumerable<JsonElement> ReadSseDataAsync(

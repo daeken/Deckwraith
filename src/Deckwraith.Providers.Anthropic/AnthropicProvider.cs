@@ -117,7 +117,8 @@ public sealed class AnthropicProvider : IModelProvider, IProviderApiKeyAuthentic
         {
             yield return new ModelProviderError(
                 "anthropic-http",
-                await ProviderHttp.ReadErrorAsync(response, cancellationToken).ConfigureAwait(false),
+                await ProviderHttp.ReadErrorAsync(response, cancellationToken, apiKey)
+                    .ConfigureAwait(false),
                 ProviderHttp.IsRetryable(response.StatusCode));
             yield break;
         }

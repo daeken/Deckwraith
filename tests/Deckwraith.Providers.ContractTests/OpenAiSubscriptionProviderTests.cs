@@ -325,6 +325,36 @@ public sealed class OpenAiSubscriptionProviderTests
     }
 
     [Fact]
+    public async Task SubscriptionErrorsCannotEchoTheAccessToken()
+    {
+        var store = new MemoryCredentialStore();
+        var token = Jwt(new
+        {
+            exp = Now.AddHours(1).ToUnixTimeSeconds(),
+            chatgpt_account_id = "account-1",
+        });
+        var manager = CreateManager(store);
+        await manager.SaveSessionAsync(token, "refresh-token", null, "account-1", Now.AddHours(1));
+        var handler = new RecordingHandler(_ => new HttpResponseMessage(HttpStatusCode.BadRequest)
+        {
+            Content = new StringContent(
+                JsonSerializer.Serialize(new { error = new { message = $"Rejected {token}" } }),
+                Encoding.UTF8,
+                "application/json"),
+        });
+        var provider = new OpenAiSubscriptionProvider(
+            manager,
+            new OpenAiSubscriptionProviderOptions(new Uri("https://chatgpt.test/")),
+            new HttpClient(handler));
+
+        var error = Assert.IsType<ModelProviderError>(Assert.Single(
+            await CollectAsync(provider, CreateRequest())));
+
+        Assert.Equal("Rejected [redacted]", error.Message);
+        Assert.DoesNotContain(token, error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
     [Trait("Category", "Live")]
     public async Task OpenAiSubscriptionLiveSmokeIsManuallyGated()
     {

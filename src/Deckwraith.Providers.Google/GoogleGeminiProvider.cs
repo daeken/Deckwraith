@@ -93,7 +93,8 @@ public sealed class GoogleGeminiProvider : IModelProvider
         {
             yield return new ModelProviderError(
                 "google-http",
-                await ProviderHttp.ReadErrorAsync(response, cancellationToken).ConfigureAwait(false),
+                await ProviderHttp.ReadErrorAsync(response, cancellationToken, apiKey)
+                    .ConfigureAwait(false),
                 ProviderHttp.IsRetryable(response.StatusCode));
             yield break;
         }
