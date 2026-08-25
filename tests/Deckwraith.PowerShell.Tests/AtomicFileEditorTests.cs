@@ -6,12 +6,14 @@ using System.Text.Json;
 using Deckwraith.Application.Files;
 using Deckwraith.Application.State;
 using Deckwraith.Core.Naming;
+using Deckwraith.Core.Serialization;
 using Deckwraith.Core.State;
 using Deckwraith.Persistence.Archives;
 using Deckwraith.Persistence.Artifacts;
 using Deckwraith.Persistence.Git;
 using Deckwraith.Persistence.State;
 using Deckwraith.PowerShell.Hosting;
+using Deckwraith.PowerShell.Serialization;
 
 namespace Deckwraith.PowerShell.Tests;
 
@@ -64,21 +66,18 @@ public sealed class AtomicFileEditorTests
         var execution = await manager.ExecuteAsync(
             new PowerShellInvocationContext("lumen", Haunt: "work"),
             """
-            $result = Invoke-DwFileEdit -Operation @(
+            Invoke-DwFileEdit -Operation @(
                 @{ path = 'note.txt'; kind = 'append'; text = 'from lumen' }
             ) -CommitSubject 'Continue the note' -CommitBody 'Use the haunt project by default.'
-            [pscustomobject]@{
-                CommitId = $result.Commit.CommitId
-                PathCount = $result.Commit.Paths.Count
-                AuthorEmail = $result.Commit.AuthorEmail
-            }
             """);
 
         Assert.Empty(execution.Errors);
-        var summary = Assert.Single(execution.Output);
-        Assert.NotEmpty(Property<string>(summary, "CommitId"));
-        Assert.Equal(1, Property<int>(summary, "PathCount"));
-        Assert.Equal("lumen@deckwraith.local", Property<string>(summary, "AuthorEmail"));
+        var portable = PortablePowerShellValue.ToJsonElement(Assert.Single(execution.Output));
+        Assert.Equal(1, portable.GetProperty("files").GetArrayLength());
+        var commit = portable.GetProperty("commit");
+        Assert.NotEmpty(commit.GetProperty("commitId").GetString() ?? string.Empty);
+        Assert.Equal(1, commit.GetProperty("paths").GetArrayLength());
+        Assert.Equal("lumen@deckwraith.local", commit.GetProperty("authorEmail").GetString());
         Assert.Equal("hello\nfrom lumen", await File.ReadAllTextAsync(notePath));
         Assert.Equal("2", await GitAsync(
             projectDirectory.Path, ["rev-list", "--count", "HEAD"]));

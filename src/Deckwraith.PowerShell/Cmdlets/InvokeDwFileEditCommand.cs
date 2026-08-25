@@ -4,13 +4,14 @@ using System.Management.Automation;
 using System.Text.Json;
 using Deckwraith.Application.Files;
 using Deckwraith.Core.Naming;
+using Deckwraith.Core.Serialization;
 using Deckwraith.Core.State;
 using Deckwraith.PowerShell.Serialization;
 
 namespace Deckwraith.PowerShell.Cmdlets;
 
 [Cmdlet(VerbsLifecycle.Invoke, "DwFileEdit")]
-[OutputType(typeof(AtomicFileEditResult))]
+[OutputType(typeof(PSObject))]
 public sealed class InvokeDwFileEditCommand : DwCmdlet
 {
     [Parameter(Mandatory = true, Position = 0)]
@@ -90,7 +91,9 @@ public sealed class InvokeDwFileEditCommand : DwCmdlet
                 commitAsync,
                 CancellationToken.None).GetAwaiter().GetResult();
 
-            WriteObject(result);
+            WriteObject(
+                PortablePowerShellValue.FromJsonElement(CanonicalJson.ToElement(result)),
+                enumerateCollection: false);
         }
         catch (Exception exception) when (exception is not PipelineStoppedException)
         {
