@@ -35,6 +35,13 @@ public sealed record TurnResult(
 
 public interface IInferenceEventSink
 {
+    ValueTask OnModelRequestedAsync(
+        string wraith,
+        string runId,
+        string shellId,
+        string operationId,
+        CancellationToken cancellationToken);
+
     ValueTask OnModelEventAsync(
         string wraith,
         string runId,
@@ -546,8 +553,19 @@ public sealed class InferenceRuntime : IDisposable
 
             var toolCalls = new List<ModelToolCallCompleted>();
             ModelResponseCompleted? completed = null;
+            var terminalEventPublished = false;
             try
             {
+                if (_events is not null)
+                {
+                    await _events.OnModelRequestedAsync(
+                        agent.Value,
+                        run.RunId,
+                        shell.ShellId,
+                        requestId,
+                        cancellationToken).ConfigureAwait(false);
+                }
+
                 await foreach (var modelEvent in provider.RunAsync(request, cancellationToken)
                     .WithCancellation(cancellationToken).ConfigureAwait(false))
                 {
@@ -560,6 +578,8 @@ public sealed class InferenceRuntime : IDisposable
                             modelEvent,
                             cancellationToken).ConfigureAwait(false);
                     }
+                    terminalEventPublished |= modelEvent is
+                        ModelResponseCompleted or ModelProviderError;
 
                     switch (modelEvent)
                     {
@@ -591,7 +611,7 @@ public sealed class InferenceRuntime : IDisposable
             }
             catch (OperationCanceledException)
             {
-                if (_events is not null)
+                if (_events is not null && !terminalEventPublished)
                 {
                     await _events.OnModelEventAsync(
                         agent.Value,
@@ -610,6 +630,24 @@ public sealed class InferenceRuntime : IDisposable
             }
             catch (Exception exception)
             {
+                if (_events is not null && !terminalEventPublished)
+                {
+                    var error = exception is ModelInvocationException invocation
+                        ? new ModelProviderError(
+                            invocation.Code,
+                            invocation.Message,
+                            invocation.Retryable)
+                        : new ModelProviderError(
+                            "provider-exception",
+                            exception.Message,
+                            true);
+                    await _events.OnModelEventAsync(
+                        agent.Value,
+                        run.RunId,
+                        shell.ShellId,
+                        error,
+                        CancellationToken.None).ConfigureAwait(false);
+                }
                 await _archive.AppendAsync(
                     ArchiveEventFor(run, shell, "model.failed", new
                     {

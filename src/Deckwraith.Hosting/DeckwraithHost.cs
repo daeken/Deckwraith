@@ -110,6 +110,7 @@ public sealed class DeckwraithHost : IDisposable
         "host.request.completed",
         "host.request.failed",
         "recovery.completed",
+        "model.requested",
         "model.started",
         "model.text-delta",
         "model.tool-call",
@@ -1037,6 +1038,21 @@ public sealed class DeckwraithHost : IDisposable
         IInferenceEventSink,
         IDeckbookEventSink
     {
+        public ValueTask OnModelRequestedAsync(
+            string wraith,
+            string runId,
+            string shellId,
+            string operationId,
+            CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            events.Publish(
+                "model.requested",
+                new { wraith, runId, shellId, operationId },
+                clock.UtcNow);
+            return ValueTask.CompletedTask;
+        }
+
         public ValueTask OnModelEventAsync(
             string wraith,
             string runId,

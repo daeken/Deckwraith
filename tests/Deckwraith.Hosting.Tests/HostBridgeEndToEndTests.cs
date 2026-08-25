@@ -488,9 +488,13 @@ public sealed class HostBridgeEndToEndTests
 
             await Assert.ThrowsAnyAsync<OperationCanceledException>(() => turn);
             var events = await ReadEventsThroughAsync(host, host.LatestEventCursor);
+            var requested = Assert.Single(events, hostEvent =>
+                hostEvent.Name == "model.requested" &&
+                hostEvent.Payload.GetProperty("runId").GetString() == runId);
             var terminal = Assert.Single(events, hostEvent =>
                 hostEvent.Name == "model.completed" &&
                 hostEvent.Payload.GetProperty("runId").GetString() == runId);
+            Assert.True(requested.Cursor < terminal.Cursor);
             Assert.Equal(
                 "cancelled",
                 terminal.Payload.GetProperty("finishReason").GetString());
@@ -526,6 +530,60 @@ public sealed class HostBridgeEndToEndTests
             Assert.NotEqual(
                 runId,
                 restarted.Result!.Value.GetProperty("run").GetProperty("runId").GetString());
+        }
+        finally
+        {
+            Directory.Delete(rootPath, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task ProviderFailuresBeforeStreamingPublishATerminalLifecycleEvent()
+    {
+        var rootPath = Path.Combine(
+            Path.GetTempPath(), $"deckwraith-host-provider-failure-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(rootPath);
+        try
+        {
+            using var host = await DeckwraithHost.OpenAsync(
+                rootPath, additionalProviders: [new ThrowingProvider()]);
+            AssertSuccess(await host.ExecuteAsync(Command(
+                "deck.initialize", new { }, "initialize-for-provider-failure")));
+            var started = await host.ExecuteAsync(Command(
+                "run.start",
+                new
+                {
+                    wraith = "steward",
+                    haunt = "setup",
+                    objective = "surface provider failures",
+                    provider = "throwing",
+                    model = "throwing-model",
+                },
+                "start-provider-failure-run"));
+            AssertSuccess(started);
+            var runId = started.Result!.Value.GetProperty("run").GetProperty("runId").GetString();
+
+            var turn = await host.ExecuteAsync(Command(
+                "run.turn",
+                new { wraith = "steward", runId, message = "Fail before streaming." },
+                "provider-failure-turn"));
+
+            Assert.False(turn.Success);
+            var events = await ReadEventsThroughAsync(host, host.LatestEventCursor);
+            var requested = Assert.Single(events, hostEvent =>
+                hostEvent.Name == "model.requested" &&
+                hostEvent.Payload.GetProperty("runId").GetString() == runId);
+            var terminal = Assert.Single(events, hostEvent =>
+                hostEvent.Name == "model.error" &&
+                hostEvent.Payload.GetProperty("runId").GetString() == runId);
+            Assert.True(requested.Cursor < terminal.Cursor);
+            Assert.Equal("provider-exception", terminal.Payload.GetProperty("code").GetString());
+            Assert.Equal(
+                "provider failed before streaming",
+                terminal.Payload.GetProperty("message").GetString());
+            Assert.DoesNotContain(events, hostEvent =>
+                hostEvent.Name == "model.started" &&
+                hostEvent.Payload.GetProperty("runId").GetString() == runId);
         }
         finally
         {
@@ -651,6 +709,19 @@ public sealed class HostBridgeEndToEndTests
             yield return new ModelResponseStarted("blocking-response");
             await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
         }
+    }
+
+    private sealed class ThrowingProvider : IModelProvider
+    {
+        public string ProviderId => "throwing";
+
+        public ProviderCapabilities Capabilities { get; } = new(
+            true, false, false, false, false);
+
+        public IAsyncEnumerable<ModelEvent> RunAsync(
+            ModelRequest request,
+            CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("provider failed before streaming");
     }
 
     private sealed class EmptyCredentialStore : IProviderCredentialStore

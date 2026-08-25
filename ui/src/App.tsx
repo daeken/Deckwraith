@@ -902,9 +902,9 @@ function CheckpointPanel({ checkpoints, busy, mutate }: { checkpoints: Checkpoin
 
 function LiveRail({ events }: { events: HostEvent[] }) {
   const activeModels = useMemo(() => activeLifecycleStarts(
-    events, "model.started", MODEL_TERMINAL_EVENTS, modelLifecycleKey), [events]);
+    events, MODEL_START_EVENTS, MODEL_TERMINAL_EVENTS, modelLifecycleKey), [events]);
   const activeKernels = useMemo(() => activeLifecycleStarts(
-    events, "kernel.started", KERNEL_TERMINAL_EVENTS, kernelLifecycleKey), [events]);
+    events, KERNEL_START_EVENTS, KERNEL_TERMINAL_EVENTS, kernelLifecycleKey), [events]);
   const activity = useMemo(() => visibleActivity(events), [events]);
   const activeModel = activeModels.at(-1);
   const modelIsActive = activeModels.length > 0;
@@ -932,6 +932,7 @@ function LiveRail({ events }: { events: HostEvent[] }) {
 const ACTIVITY_EVENTS = new Set([
   "host.request.failed",
   "recovery.completed",
+  "model.requested",
   "model.started",
   "model.tool-call",
   "model.usage",
@@ -941,8 +942,11 @@ const ACTIVITY_EVENTS = new Set([
   "kernel.error",
   "kernel.completed",
 ]);
+const MODEL_START_EVENTS = new Set(["model.requested", "model.started"]);
 const MODEL_TERMINAL_EVENTS = new Set(["model.completed", "model.error"]);
+const KERNEL_START_EVENTS = new Set(["kernel.started"]);
 const KERNEL_TERMINAL_EVENTS = new Set(["kernel.completed"]);
+const LIFECYCLE_START_EVENTS = new Set([...MODEL_START_EVENTS, ...KERNEL_START_EVENTS]);
 
 function describeActivity(event: HostEvent): { title: string; detail: string; tone?: string } {
   const wraith = payloadString(event, "wraith");
@@ -953,8 +957,10 @@ function describeActivity(event: HostEvent): { title: string; detail: string; to
       return { title: "Request failed", detail: joinDetail(payloadString(event, "name"), payloadString(event, "message")), tone: "failed" };
     case "recovery.completed":
       return { title: "Recovered durable state", detail: wraith || "Startup reconciliation completed" };
+    case "model.requested":
+      return { title: "Contacting model", detail: subject || "Waiting for the provider", tone: "active" };
     case "model.started":
-      return { title: "Model turn started", detail: subject || "Preparing inference", tone: "active" };
+      return { title: "Model responding", detail: subject || "Response stream opened", tone: "active" };
     case "model.tool-call":
       return { title: `Tool · ${payloadString(event, "name") || "unnamed"}`, detail: subject || "The model requested a tool" };
     case "model.usage":
@@ -982,31 +988,31 @@ function appendHostEvent(events: HostEvent[], event: HostEvent) {
   if (recent.length === next.length) return next;
   const firstRecentCursor = recent[0]?.cursor ?? 0;
   const activeStarts = [
-    ...activeLifecycleStarts(next, "model.started", MODEL_TERMINAL_EVENTS, modelLifecycleKey),
-    ...activeLifecycleStarts(next, "kernel.started", KERNEL_TERMINAL_EVENTS, kernelLifecycleKey),
+    ...activeLifecycleStarts(next, MODEL_START_EVENTS, MODEL_TERMINAL_EVENTS, modelLifecycleKey),
+    ...activeLifecycleStarts(next, KERNEL_START_EVENTS, KERNEL_TERMINAL_EVENTS, kernelLifecycleKey),
   ].filter((start) => start.cursor < firstRecentCursor);
   return [...activeStarts, ...recent].sort((left, right) => left.cursor - right.cursor);
 }
 
 function visibleActivity(events: HostEvent[]) {
   const activeStartCursors = new Set([
-    ...activeLifecycleStarts(events, "model.started", MODEL_TERMINAL_EVENTS, modelLifecycleKey),
-    ...activeLifecycleStarts(events, "kernel.started", KERNEL_TERMINAL_EVENTS, kernelLifecycleKey),
+    ...activeLifecycleStarts(events, MODEL_START_EVENTS, MODEL_TERMINAL_EVENTS, modelLifecycleKey),
+    ...activeLifecycleStarts(events, KERNEL_START_EVENTS, KERNEL_TERMINAL_EVENTS, kernelLifecycleKey),
   ].map((event) => event.cursor));
   return events.filter((event) => ACTIVITY_EVENTS.has(event.name) &&
-    (!event.name.endsWith(".started") || activeStartCursors.has(event.cursor)));
+    (!LIFECYCLE_START_EVENTS.has(event.name) || activeStartCursors.has(event.cursor)));
 }
 
 function activeLifecycleStarts(
   events: HostEvent[],
-  startedName: string,
+  startedNames: Set<string>,
   terminalNames: Set<string>,
   keyOf: (event: HostEvent) => string,
 ) {
   const active = new Map<string, HostEvent>();
   for (const event of events) {
     const key = keyOf(event);
-    if (event.name === startedName) {
+    if (startedNames.has(event.name)) {
       active.set(key, event);
     } else if (terminalNames.has(event.name)) {
       active.delete(key);
