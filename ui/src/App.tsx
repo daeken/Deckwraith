@@ -56,6 +56,7 @@ export function App() {
   const [theme, setTheme] = useState<ThemePreference["theme"]>("system");
   const [themeTokens, setThemeTokens] = useState<Record<string, string>>({});
   const [providerAccess, setProviderAccess] = useState<ProviderSnapshot[]>([]);
+  const [providerDialogOpen, setProviderDialogOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [turnWraith, setTurnWraith] = useState("");
@@ -377,6 +378,8 @@ export function App() {
           }}
         />
         <ProviderDialog
+          open={providerDialogOpen}
+          onOpenChange={setProviderDialogOpen}
           providers={providerAccess}
           busy={busy}
           onRefresh={async () => {
@@ -494,6 +497,7 @@ export function App() {
                 busy={busy}
                 mutate={mutate}
                 onProviderAuthentication={updateProviderAuthentication}
+                onOpenProviderAccess={() => setProviderDialogOpen(true)}
                 turnActive={turnWraith === selectedWraith}
                 turnStopping={turnStopping && turnWraith === selectedWraith}
                 beginTurn={() => beginModelTurn(selectedWraith)}
@@ -619,7 +623,7 @@ function IdentityList({ values }: { values: string[] }) {
     : <p className="identity-copy empty-copy">None recorded.</p>;
 }
 
-function ConversationPanel({ context, identity, runs, providers, wraith, haunt, defaultPath, busy, mutate, onProviderAuthentication, turnActive, turnStopping, beginTurn, finishTurn, stopTurn }: {
+function ConversationPanel({ context, identity, runs, providers, wraith, haunt, defaultPath, busy, mutate, onProviderAuthentication, onOpenProviderAccess, turnActive, turnStopping, beginTurn, finishTurn, stopTurn }: {
   context: WraithSnapshot["context"];
   identity: IdentityDocument;
   runs: RunDocument[];
@@ -630,6 +634,7 @@ function ConversationPanel({ context, identity, runs, providers, wraith, haunt, 
   busy: boolean;
   mutate: (action: AsyncAction) => Promise<void>;
   onProviderAuthentication: (authentication: ProviderAuthenticationStatus) => void;
+  onOpenProviderAccess: () => void;
   turnActive: boolean;
   turnStopping: boolean;
   beginTurn: () => AbortController | null;
@@ -785,6 +790,10 @@ function ConversationPanel({ context, identity, runs, providers, wraith, haunt, 
       </div>
       {!active && authentication && <div className={clsx("provider-inline-status", authentication.state)}>
         <StatusPill value={authentication.state} /><span>{authentication.message}</span>
+        {providerNeedsAttention(authentication.state) && <button
+          className="quiet provider-inline-action"
+          onClick={onOpenProviderAccess}
+        >Open provider access</button>}
       </div>}
       {attachmentError && <div className="setup-error"><b>Couldn’t attach that.</b> {attachmentError}</div>}
     </section>
@@ -1377,7 +1386,9 @@ const API_PROVIDER_CARDS = [
   { providerId: "zai-api", name: "Z.AI", environment: "ZAI_API_KEY" },
 ] as const;
 
-function ProviderDialog({ providers, busy, onRefresh, onSignIn, onImport, onDisconnect, onSetApiKey, onDeleteApiKey }: {
+function ProviderDialog({ open, onOpenChange, providers, busy, onRefresh, onSignIn, onImport, onDisconnect, onSetApiKey, onDeleteApiKey }: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
   providers: ProviderSnapshot[];
   busy: boolean;
   onRefresh: () => Promise<void>;
@@ -1387,7 +1398,6 @@ function ProviderDialog({ providers, busy, onRefresh, onSignIn, onImport, onDisc
   onSetApiKey: (providerId: string, apiKey: string) => Promise<void>;
   onDeleteApiKey: (providerId: string) => Promise<void>;
 }) {
-  const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [localError, setLocalError] = useState("");
   const provider = providers.find((item) => item.providerId === "openai-codex-subscription");
@@ -1408,7 +1418,7 @@ function ProviderDialog({ providers, busy, onRefresh, onSignIn, onImport, onDisc
   }, [open]);
 
   return <Dialog.Root open={open} onOpenChange={(nextOpen) => {
-    setOpen(nextOpen);
+    onOpenChange(nextOpen);
     if (nextOpen) {
       setLoading(true);
       setLocalError("");
@@ -1567,6 +1577,9 @@ export function statusLabel(value: string) {
     .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
     .replace(/[-_]+/g, " ")
     .toLowerCase();
+}
+export function providerNeedsAttention(state: ProviderAuthenticationStatus["state"]) {
+  return ["missing", "expired", "rejected", "error"].includes(state);
 }
 function providerStateLabel(value: string) {
   return ({

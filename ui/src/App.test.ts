@@ -4,6 +4,7 @@ import {
   conversationMessage,
   describeActivity,
   eventChangesSnapshot,
+  providerNeedsAttention,
   reconcileProviderAccess,
   statusLabel,
   visibleActivity,
@@ -172,6 +173,16 @@ describe("conversation presentation", () => {
     expect(statusLabel("awaitingInput")).toBe("awaiting input");
     expect(statusLabel("outcome_unknown")).toBe("outcome unknown");
     expect(statusLabel("model-error")).toBe("model error");
+  });
+
+  it("offers a provider recovery action only for blocked credentials", () => {
+    expect(providerNeedsAttention("missing")).toBe(true);
+    expect(providerNeedsAttention("expired")).toBe(true);
+    expect(providerNeedsAttention("rejected")).toBe(true);
+    expect(providerNeedsAttention("error")).toBe(true);
+    expect(providerNeedsAttention("refreshing")).toBe(false);
+    expect(providerNeedsAttention("expiring")).toBe(false);
+    expect(providerNeedsAttention("ready")).toBe(false);
   });
 });
 

@@ -84,5 +84,8 @@ label, .identity-list, .calibration-list dd, .identity-copy { color: color-mix(i
 .cell-card.stale { border-color: color-mix(in srgb, var(--dw-danger) 42%, var(--dw-border)); }.output { color: var(--dw-success); }.timeline-node, .pulse.active, .event.active .event-mark { background: var(--dw-accent); }.pulse.active { box-shadow: 0 0 0 5px color-mix(in srgb, var(--dw-accent) 12%, transparent), 0 0 17px var(--dw-accent); }.event.failed .event-mark { background: var(--dw-danger); }
 .thumb { background: color-mix(in srgb, var(--dw-muted) 55%, var(--dw-border)); }.error-banner, .setup-error { background: var(--dw-danger); border-color: var(--dw-danger); }.busy-line { background: linear-gradient(90deg, transparent, var(--dw-accent), transparent); }
 .dialog-overlay { background: color-mix(in srgb, var(--dw-background) 72%, transparent); }.dialog-content { border-color: var(--dw-border); background: var(--dw-surface-raised); box-shadow: 0 30px 90px color-mix(in srgb, var(--dw-background) 70%, transparent); }.dialog-content p { color: var(--dw-muted); }
+.provider-inline-status > span:not(.status-pill) { min-width: 0; }
+.provider-inline-status.expired { color: var(--dw-danger); }
+.provider-inline-action { flex: 0 0 auto; margin-left: auto; padding: 4px 7px; border-color: currentColor !important; color: inherit !important; white-space: nowrap; }
 @keyframes scan { from { transform: translateX(-70%); } to { transform: translateX(70%); } }
 @media (max-width: 560px) { .provider-api-grid { grid-template-columns: 1fr; } }
