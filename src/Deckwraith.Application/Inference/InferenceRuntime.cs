@@ -599,6 +599,11 @@ public sealed class InferenceRuntime : IDisposable
                             throw new ModelInvocationException(
                                 error.Code, error.Message, error.Retryable);
                     }
+
+                    if (completed is not null)
+                    {
+                        break;
+                    }
                 }
 
                 if (completed is null)

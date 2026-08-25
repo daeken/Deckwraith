@@ -657,6 +657,119 @@ public sealed class HostBridgeEndToEndTests
         }
     }
 
+    [Fact]
+    public async Task AProviderTerminalEventEndsEnumerationImmediately()
+    {
+        var rootPath = Path.Combine(
+            Path.GetTempPath(), $"deckwraith-host-terminal-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(rootPath);
+        try
+        {
+            var provider = new EventsAfterTerminalProvider();
+            using var host = await DeckwraithHost.OpenAsync(
+                rootPath, additionalProviders: [provider]);
+            AssertSuccess(await host.ExecuteAsync(Command(
+                "deck.initialize", new { }, "initialize-for-terminal")));
+            var started = await host.ExecuteAsync(Command(
+                "run.start",
+                new
+                {
+                    wraith = "steward",
+                    haunt = "setup",
+                    objective = "stop at the provider terminal event",
+                    provider = "events-after-terminal",
+                    model = "terminal-model",
+                },
+                "start-terminal-run"));
+            AssertSuccess(started);
+            var runId = started.Result!.Value.GetProperty("run").GetProperty("runId").GetString();
+
+            var turn = await host.ExecuteAsync(Command(
+                "run.turn",
+                new { wraith = "steward", runId, message = "Respect the terminal event." },
+                "terminal-turn"));
+
+            AssertSuccess(turn);
+            Assert.Equal("before terminal", turn.Result!.Value.GetProperty("text").GetString());
+            Assert.Equal(3, provider.EventsRequested);
+            var events = await ReadEventsThroughAsync(host, host.LatestEventCursor);
+            var terminal = Assert.Single(events, hostEvent =>
+                hostEvent.Name == "model.completed" &&
+                hostEvent.Payload.GetProperty("runId").GetString() == runId);
+            Assert.Equal("stop", terminal.Payload.GetProperty("finishReason").GetString());
+            Assert.DoesNotContain(events, hostEvent =>
+                hostEvent.Name == "model.text-delta" &&
+                hostEvent.Payload.GetProperty("delta").GetString() == " after terminal");
+        }
+        finally
+        {
+            Directory.Delete(rootPath, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task ConcurrentTurnsForOneWraithNeverStartASecondRunloop()
+    {
+        var rootPath = Path.Combine(
+            Path.GetTempPath(), $"deckwraith-host-concurrent-turns-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(rootPath);
+        try
+        {
+            var provider = new CountingBlockingProvider();
+            using var host = await DeckwraithHost.OpenAsync(
+                rootPath, additionalProviders: [provider]);
+            AssertSuccess(await host.ExecuteAsync(Command(
+                "deck.initialize", new { }, "initialize-for-concurrency")));
+            var started = await host.ExecuteAsync(Command(
+                "run.start",
+                new
+                {
+                    wraith = "steward",
+                    haunt = "setup",
+                    objective = "serialize attention",
+                    provider = "counting-blocking",
+                    model = "blocking-model",
+                },
+                "start-concurrent-run"));
+            AssertSuccess(started);
+            var runId = started.Result!.Value.GetProperty("run").GetProperty("runId").GetString();
+
+            using var firstCancellation = new CancellationTokenSource();
+            using var secondCancellation = new CancellationTokenSource();
+            var firstTurn = host.ExecuteAsync(Command(
+                "run.turn",
+                new { wraith = "steward", runId, message = "First message." },
+                "first-concurrent-turn"), firstCancellation.Token);
+            await provider.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            var secondTurn = host.ExecuteAsync(Command(
+                "run.turn",
+                new { wraith = "steward", runId, message = "Second message." },
+                "second-concurrent-turn"), secondCancellation.Token);
+
+            secondCancellation.Cancel();
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => secondTurn);
+            Assert.Equal(1, provider.InvocationCount);
+
+            firstCancellation.Cancel();
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => firstTurn);
+            Assert.Equal(1, provider.InvocationCount);
+
+            var snapshot = await host.ExecuteAsync(Query(
+                "wraith.snapshot", new { wraith = "steward" }, "concurrent-wraith-snapshot"));
+            AssertSuccess(snapshot);
+            var messages = snapshot.Result!.Value.GetProperty("context").GetProperty("items")
+                .EnumerateArray()
+                .Where(item => item.GetProperty("kind").GetString() == "message")
+                .ToArray();
+            var userMessage = Assert.Single(messages);
+            Assert.Equal("First message.", userMessage.GetProperty("text").GetString());
+        }
+        finally
+        {
+            Directory.Delete(rootPath, recursive: true);
+        }
+    }
+
     private static HostRequest Command(string name, object payload, string requestId) =>
         Request(HostRequestKind.Command, name, payload, requestId);
 
@@ -803,6 +916,59 @@ public sealed class HostBridgeEndToEndTests
             throw new TaskCanceledException(
                 "provider timed out",
                 new TimeoutException("The provider exceeded its request timeout."));
+    }
+
+    private sealed class EventsAfterTerminalProvider : IModelProvider
+    {
+        public string ProviderId => "events-after-terminal";
+
+        public ProviderCapabilities Capabilities { get; } = new(
+            true, false, false, false, false);
+
+        public int EventsRequested { get; private set; }
+
+        public async IAsyncEnumerable<ModelEvent> RunAsync(
+            ModelRequest request,
+            [EnumeratorCancellation] CancellationToken cancellationToken)
+        {
+            await Task.Yield();
+            cancellationToken.ThrowIfCancellationRequested();
+            EventsRequested++;
+            yield return new ModelResponseStarted("terminal-response");
+            EventsRequested++;
+            yield return new ModelTextDelta("before terminal");
+            EventsRequested++;
+            yield return new ModelResponseCompleted(ModelFinishReason.Stop, null);
+            EventsRequested++;
+            yield return new ModelTextDelta(" after terminal");
+            EventsRequested++;
+            throw new InvalidOperationException("The runtime read beyond the terminal event.");
+        }
+    }
+
+    private sealed class CountingBlockingProvider : IModelProvider
+    {
+        private int _invocationCount;
+
+        public string ProviderId => "counting-blocking";
+
+        public ProviderCapabilities Capabilities { get; } = new(
+            true, false, false, false, false);
+
+        public int InvocationCount => Volatile.Read(ref _invocationCount);
+
+        public TaskCompletionSource<bool> Started { get; } = new(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public async IAsyncEnumerable<ModelEvent> RunAsync(
+            ModelRequest request,
+            [EnumeratorCancellation] CancellationToken cancellationToken)
+        {
+            Interlocked.Increment(ref _invocationCount);
+            Started.TrySetResult(true);
+            yield return new ModelResponseStarted("counting-blocking-response");
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+        }
     }
 
     private sealed class EmptyCredentialStore : IProviderCredentialStore
