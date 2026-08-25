@@ -591,6 +591,72 @@ public sealed class HostBridgeEndToEndTests
         }
     }
 
+    [Fact]
+    public async Task ProviderTimeoutsFailTheRunWithoutMasqueradingAsCancellation()
+    {
+        var rootPath = Path.Combine(
+            Path.GetTempPath(), $"deckwraith-host-provider-timeout-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(rootPath);
+        try
+        {
+            using var host = await DeckwraithHost.OpenAsync(
+                rootPath, additionalProviders: [new TimingOutProvider()]);
+            AssertSuccess(await host.ExecuteAsync(Command(
+                "deck.initialize", new { }, "initialize-for-provider-timeout")));
+            var started = await host.ExecuteAsync(Command(
+                "run.start",
+                new
+                {
+                    wraith = "steward",
+                    haunt = "setup",
+                    objective = "surface provider timeouts",
+                    provider = "timing-out",
+                    model = "timing-out-model",
+                },
+                "start-provider-timeout-run"));
+            AssertSuccess(started);
+            var runId = started.Result!.Value.GetProperty("run").GetProperty("runId").GetString();
+
+            var turn = await host.ExecuteAsync(Command(
+                "run.turn",
+                new { wraith = "steward", runId, message = "Wait for the provider." },
+                "provider-timeout-turn"));
+
+            Assert.False(turn.Success);
+            Assert.Equal("provider-timeout", turn.Error?.Code);
+            Assert.True(turn.Error?.Retryable);
+            var events = await ReadEventsThroughAsync(host, host.LatestEventCursor);
+            var requested = Assert.Single(events, hostEvent =>
+                hostEvent.Name == "model.requested" &&
+                hostEvent.Payload.GetProperty("runId").GetString() == runId);
+            var terminal = Assert.Single(events, hostEvent =>
+                hostEvent.Name == "model.error" &&
+                hostEvent.Payload.GetProperty("runId").GetString() == runId);
+            Assert.True(requested.Cursor < terminal.Cursor);
+            Assert.Equal("provider-timeout", terminal.Payload.GetProperty("code").GetString());
+            Assert.True(terminal.Payload.GetProperty("retryable").GetBoolean());
+            Assert.DoesNotContain(events, hostEvent =>
+                hostEvent.Name == "model.completed" &&
+                hostEvent.Payload.GetProperty("runId").GetString() == runId &&
+                hostEvent.Payload.GetProperty("finishReason").GetString() == "cancelled");
+
+            var snapshot = await host.ExecuteAsync(Query(
+                "wraith.snapshot", new { wraith = "steward" }, "timed-out-wraith-snapshot"));
+            AssertSuccess(snapshot);
+            var failedRun = Assert.Single(
+                snapshot.Result!.Value.GetProperty("runs").EnumerateArray(),
+                run => run.GetProperty("runId").GetString() == runId);
+            Assert.Equal("failed", failedRun.GetProperty("status").GetString());
+            Assert.Equal(
+                "run-failed",
+                failedRun.GetProperty("shells")[0].GetProperty("endReason").GetString());
+        }
+        finally
+        {
+            Directory.Delete(rootPath, recursive: true);
+        }
+    }
+
     private static HostRequest Command(string name, object payload, string requestId) =>
         Request(HostRequestKind.Command, name, payload, requestId);
 
@@ -722,6 +788,21 @@ public sealed class HostBridgeEndToEndTests
             ModelRequest request,
             CancellationToken cancellationToken) =>
             throw new InvalidOperationException("provider failed before streaming");
+    }
+
+    private sealed class TimingOutProvider : IModelProvider
+    {
+        public string ProviderId => "timing-out";
+
+        public ProviderCapabilities Capabilities { get; } = new(
+            true, false, false, false, false);
+
+        public IAsyncEnumerable<ModelEvent> RunAsync(
+            ModelRequest request,
+            CancellationToken cancellationToken) =>
+            throw new TaskCanceledException(
+                "provider timed out",
+                new TimeoutException("The provider exceeded its request timeout."));
     }
 
     private sealed class EmptyCredentialStore : IProviderCredentialStore

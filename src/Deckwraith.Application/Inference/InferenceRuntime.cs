@@ -446,7 +446,7 @@ public sealed class InferenceRuntime : IDisposable
                     cancellationToken).ConfigureAwait(false);
                 throw;
             }
-            catch (OperationCanceledException)
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
                 var cancelledShell = shell with
                 {
@@ -609,7 +609,7 @@ public sealed class InferenceRuntime : IDisposable
                         true);
                 }
             }
-            catch (OperationCanceledException)
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
                 if (_events is not null && !terminalEventPublished)
                 {
@@ -630,33 +630,32 @@ public sealed class InferenceRuntime : IDisposable
             }
             catch (Exception exception)
             {
+                var failure = NormalizeProviderFailure(exception);
                 if (_events is not null && !terminalEventPublished)
                 {
-                    var error = exception is ModelInvocationException invocation
-                        ? new ModelProviderError(
-                            invocation.Code,
-                            invocation.Message,
-                            invocation.Retryable)
-                        : new ModelProviderError(
-                            "provider-exception",
-                            exception.Message,
-                            true);
                     await _events.OnModelEventAsync(
                         agent.Value,
                         run.RunId,
                         shell.ShellId,
-                        error,
+                        new ModelProviderError(
+                            failure.Code,
+                            failure.Message,
+                            failure.Retryable),
                         CancellationToken.None).ConfigureAwait(false);
                 }
                 await _archive.AppendAsync(
                     ArchiveEventFor(run, shell, "model.failed", new
                     {
                         operationId = requestId,
-                        error = exception.Message,
+                        error = failure.Message,
                         errorType = exception.GetType().FullName,
                     }),
                     cancellationToken).ConfigureAwait(false);
-                throw;
+                if (ReferenceEquals(failure, exception))
+                {
+                    throw;
+                }
+                throw failure;
             }
 
             var modelCompleted = await _archive.AppendAsync(
@@ -713,6 +712,36 @@ public sealed class InferenceRuntime : IDisposable
 
         throw new ModelInvocationException(
             "tool-loop-limit", $"The provider exceeded {MaximumToolLoops} tool continuations.", false);
+    }
+
+    private static ModelInvocationException NormalizeProviderFailure(Exception exception) =>
+        exception switch
+        {
+            ModelInvocationException invocation => invocation,
+            TaskCanceledException cancelled when ContainsTimeout(cancelled) =>
+                new ModelInvocationException(
+                    "provider-timeout",
+                    cancelled.Message,
+                    true,
+                    cancelled),
+            _ => new ModelInvocationException(
+                "provider-exception",
+                exception.Message,
+                true,
+                exception),
+        };
+
+    private static bool ContainsTimeout(Exception exception)
+    {
+        for (var current = exception.InnerException; current is not null;
+             current = current.InnerException)
+        {
+            if (current is TimeoutException)
+            {
+                return true;
+            }
+        }
+        return false;
     }
 
     private async Task<CurrentContextDocument> ExecuteToolAsync(
@@ -913,8 +942,12 @@ public sealed class InferenceRuntime : IDisposable
 
 public sealed class ModelInvocationException : Exception
 {
-    public ModelInvocationException(string code, string message, bool retryable)
-        : base(message)
+    public ModelInvocationException(
+        string code,
+        string message,
+        bool retryable,
+        Exception? innerException = null)
+        : base(message, innerException)
     {
         Code = code;
         Retryable = retryable;

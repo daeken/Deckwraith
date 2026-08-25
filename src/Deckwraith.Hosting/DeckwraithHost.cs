@@ -550,7 +550,7 @@ public sealed class DeckwraithHost : IDisposable
                 _clock.UtcNow);
             return HostResponse.Completed(request, result, completed.Cursor);
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
             throw;
         }
@@ -927,6 +927,8 @@ public sealed class DeckwraithHost : IDisposable
         HostProtocolException protocol => new(protocol.Code, protocol.Message, false),
         JsonException json => new("invalid-payload", json.Message, false),
         DeckStateException state => new("state-conflict", state.Message, false),
+        ModelInvocationException invocation =>
+            new(invocation.Code, invocation.Message, invocation.Retryable),
         KeyNotFoundException missing => new("not-found", missing.Message, false),
         ArgumentException argument => new("invalid-argument", argument.Message, false),
         _ => new("host-error", exception.Message, false),
