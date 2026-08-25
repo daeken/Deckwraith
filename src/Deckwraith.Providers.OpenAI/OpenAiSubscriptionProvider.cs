@@ -138,7 +138,7 @@ public sealed class OpenAiSubscriptionProvider : IModelProvider, IProviderAuthen
                         : detail;
                     if (rejected)
                     {
-                        _credentials.MarkRejected(messageText);
+                        await _credentials.MarkRejectedAsync(messageText).ConfigureAwait(false);
                     }
 
                     yield return new ModelProviderError(

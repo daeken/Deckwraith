@@ -242,7 +242,7 @@ public sealed class OpenAiSubscriptionCredentialManager : IProviderAuthenticatio
                 credential);
         }
 
-        if (_lastRejection is { } rejection)
+        if ((_lastRejection ?? credential.RejectionMessage) is { } rejection)
         {
             return Status(ProviderAuthenticationState.Rejected, rejection, credential);
         }
@@ -418,11 +418,28 @@ public sealed class OpenAiSubscriptionCredentialManager : IProviderAuthenticatio
         }
     }
 
-    internal void MarkRejected(string message)
+    internal async ValueTask MarkRejectedAsync(string message)
     {
         _lastRejection = string.IsNullOrWhiteSpace(message)
             ? "OpenAI rejected the ChatGPT subscription session. Reconnect the account."
             : message;
+        await RefreshGate.WaitAsync(CancellationToken.None).ConfigureAwait(false);
+        try
+        {
+            var credential = await ReadCredentialAsync(CancellationToken.None).ConfigureAwait(false);
+            if (credential is not null)
+            {
+                await TryPersistRejectionAsync(credential, _lastRejection).ConfigureAwait(false);
+            }
+        }
+        catch (OpenAiAuthenticationException)
+        {
+            // The in-memory rejection remains actionable if secure persistence is unavailable.
+        }
+        finally
+        {
+            RefreshGate.Release();
+        }
     }
 
     private async ValueTask<StoredCredential> RefreshAsync(
@@ -461,6 +478,7 @@ public sealed class OpenAiSubscriptionCredentialManager : IProviderAuthenticatio
                 if (rejected)
                 {
                     _lastRejection = message;
+                    await TryPersistRejectionAsync(current, message).ConfigureAwait(false);
                 }
                 else
                 {
@@ -644,7 +662,8 @@ public sealed class OpenAiSubscriptionCredentialManager : IProviderAuthenticatio
 
     private async ValueTask SaveCredentialAsync(
         StoredCredential credential,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool clearStatus = true)
     {
         try
         {
@@ -662,8 +681,28 @@ public sealed class OpenAiSubscriptionCredentialManager : IProviderAuthenticatio
                 exception);
         }
 
-        _lastError = null;
-        _lastRejection = null;
+        if (clearStatus)
+        {
+            _lastError = null;
+            _lastRejection = null;
+        }
+    }
+
+    private async ValueTask TryPersistRejectionAsync(
+        StoredCredential credential,
+        string message)
+    {
+        try
+        {
+            await SaveCredentialAsync(
+                credential with { RejectionMessage = message },
+                CancellationToken.None,
+                clearStatus: false).ConfigureAwait(false);
+        }
+        catch (OpenAiAuthenticationException)
+        {
+            // Do not replace the useful provider rejection with a secondary storage failure.
+        }
     }
 
     private static ProviderAuthenticationStatus Status(
@@ -822,7 +861,8 @@ public sealed class OpenAiSubscriptionCredentialManager : IProviderAuthenticatio
         string? AccountLabel,
         DateTimeOffset ExpiresAt,
         DateTimeOffset UpdatedAt,
-        string? ImportSourcePath = null);
+        string? ImportSourcePath = null,
+        string? RejectionMessage = null);
 }
 
 internal sealed class OpenAiSubscriptionSession(

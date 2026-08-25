@@ -308,9 +308,11 @@ public sealed class OpenAiSubscriptionProviderTests
         var exception = await Assert.ThrowsAsync<OpenAiAuthenticationException>(
             async () => await manager.GetSessionAsync(false, CancellationToken.None));
         var status = await manager.GetAuthenticationStatusAsync();
+        var restartedStatus = await CreateManager(store).GetAuthenticationStatusAsync();
 
         Assert.Equal("credential-rejected", exception.Code);
         Assert.Equal(ProviderAuthenticationState.Rejected, status.State);
+        Assert.Equal(ProviderAuthenticationState.Rejected, restartedStatus.State);
         Assert.Contains("Reconnect", status.Message, StringComparison.Ordinal);
     }
 
@@ -408,6 +410,46 @@ public sealed class OpenAiSubscriptionProviderTests
         Assert.Equal(2, requests);
         Assert.Contains(events, modelEvent => modelEvent is ModelResponseCompleted);
         Assert.DoesNotContain(events, modelEvent => modelEvent is ModelProviderError);
+    }
+
+    [Fact]
+    public async Task TransportRejectionSurvivesCredentialManagerRestart()
+    {
+        var store = new MemoryCredentialStore();
+        var refreshedToken = Jwt(new
+        {
+            exp = Now.AddHours(2).ToUnixTimeSeconds(),
+            chatgpt_account_id = "account-1",
+        });
+        var refreshHandler = new RecordingHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(JsonSerializer.Serialize(new
+            {
+                access_token = refreshedToken,
+                refresh_token = "rotated",
+                expires_in = 7200,
+            }), Encoding.UTF8, "application/json"),
+        });
+        var manager = CreateManager(store, new HttpClient(refreshHandler));
+        await manager.SaveSessionAsync(
+            Jwt(new { exp = Now.AddHours(1).ToUnixTimeSeconds(), chatgpt_account_id = "account-1" }),
+            "refresh-token",
+            null,
+            "account-1",
+            Now.AddHours(1));
+        var provider = new OpenAiSubscriptionProvider(
+            manager,
+            new OpenAiSubscriptionProviderOptions(new Uri("https://chatgpt.test/")),
+            new HttpClient(new RecordingHandler(_ =>
+                new HttpResponseMessage(HttpStatusCode.Unauthorized))));
+
+        var error = Assert.IsType<ModelProviderError>(Assert.Single(
+            await CollectAsync(provider, CreateRequest())));
+        var restartedStatus = await CreateManager(store).GetAuthenticationStatusAsync();
+
+        Assert.Equal("credential-rejected", error.Code);
+        Assert.Equal(ProviderAuthenticationState.Rejected, restartedStatus.State);
+        Assert.Contains("Reconnect", restartedStatus.Message, StringComparison.Ordinal);
     }
 
     [Fact]
