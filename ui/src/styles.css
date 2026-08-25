@@ -60,7 +60,7 @@ body { background: radial-gradient(circle at 45% -20%, color-mix(in srgb, var(--
 button { border-color: var(--dw-border); background: var(--dw-surface-raised); color: var(--dw-text); }
 button:hover:not(:disabled) { border-color: var(--dw-accent); background: color-mix(in srgb, var(--dw-surface-raised) 82%, var(--dw-accent)); }
 button.primary { color: var(--dw-background); background: linear-gradient(135deg, color-mix(in srgb, var(--dw-accent) 58%, white), var(--dw-accent)); border-color: var(--dw-accent); }
-button.danger { color: var(--dw-danger); border-color: color-mix(in srgb, var(--dw-danger) 52%, var(--dw-border)); background: color-mix(in srgb, var(--dw-danger) 13%, var(--dw-surface)); }
+button.danger { color: var(--dw-background); border-color: var(--dw-danger); background: var(--dw-danger); }
 button.quiet { color: var(--dw-muted); }
 input, textarea, select { border-color: var(--dw-border); background: var(--dw-surface); color: var(--dw-text); }
 input:focus, textarea:focus, select:focus { border-color: var(--dw-accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--dw-accent) 18%, transparent); }
@@ -79,7 +79,7 @@ label, .identity-list, .calibration-list dd, .identity-copy { color: color-mix(i
 .panel, .cell-card { box-shadow: 0 14px 40px color-mix(in srgb, var(--dw-background) 28%, transparent); }
 .identity-intro, .cell-gutter { background: color-mix(in srgb, var(--dw-surface) 86%, var(--dw-background)); }
 .empty-copy, .identity-actions span, .event p, .archive-list time { color: var(--dw-muted); }
-.status-pill { background: var(--dw-surface-raised); color: var(--dw-muted); }.status-pill.awaitingInput, .status-pill.running, .status-pill.ready { color: var(--dw-success); background: color-mix(in srgb, var(--dw-success) 15%, var(--dw-surface)); }.status-pill.failed, .status-pill.cancelled, .status-pill.rejected, .status-pill.expired, .status-pill.error { color: var(--dw-danger); background: color-mix(in srgb, var(--dw-danger) 15%, var(--dw-surface)); }
+.status-pill { background: var(--dw-surface-raised); color: var(--dw-muted); }.status-pill.awaitingInput, .status-pill.running, .status-pill.ready { color: var(--dw-background); background: var(--dw-success); }.status-pill.failed, .status-pill.cancelled, .status-pill.rejected, .status-pill.expired, .status-pill.error { color: var(--dw-background); background: var(--dw-danger); }
 .cell-card.stale { border-color: color-mix(in srgb, var(--dw-danger) 42%, var(--dw-border)); }.output { color: var(--dw-success); }.timeline-node, .pulse.active, .event.active .event-mark { background: var(--dw-accent); }.pulse.active { box-shadow: 0 0 0 5px color-mix(in srgb, var(--dw-accent) 12%, transparent), 0 0 17px var(--dw-accent); }.event.failed .event-mark { background: var(--dw-danger); }
 .thumb { background: color-mix(in srgb, var(--dw-muted) 55%, var(--dw-border)); }.error-banner, .setup-error { background: color-mix(in srgb, var(--dw-danger) 12%, var(--dw-surface)); border-color: color-mix(in srgb, var(--dw-danger) 45%, var(--dw-border)); }.busy-line { background: linear-gradient(90deg, transparent, var(--dw-accent), transparent); }
 .dialog-overlay { background: color-mix(in srgb, var(--dw-background) 72%, transparent); }.dialog-content { border-color: var(--dw-border); background: var(--dw-surface-raised); box-shadow: 0 30px 90px color-mix(in srgb, var(--dw-background) 70%, transparent); }.dialog-content p { color: var(--dw-muted); }
