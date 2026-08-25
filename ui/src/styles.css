@@ -72,7 +72,8 @@ label, .identity-list, .calibration-list dd, .identity-copy { color: color-mix(i
 .status-dot { background: var(--dw-success); box-shadow: 0 0 12px color-mix(in srgb, var(--dw-success) 50%, transparent); }
 .deck-location, .sensitivity, .panel, .run-card, .cell-card, .output, .activity-empty, .event, .check-row, .identity-path, .streaming-text { background: var(--dw-surface); border-color: var(--dw-border); }
 .deck-location span, .deck-location code, .identity-path, .project-form label > small code { color: color-mix(in srgb, var(--dw-accent) 72%, var(--dw-text)); }
-.sensitivity span, .error-banner, .setup-error { color: var(--dw-danger); }
+.sensitivity span { color: var(--dw-danger); }
+.error-banner, .setup-error { color: var(--dw-background); }
 .sensitivity { color: var(--dw-muted); }
 .topbar, .tab-list, .metric, .tab-trigger, .identity-subfield, .archive-list details, .cell-gutter, .cell-card, .checkpoint { border-color: var(--dw-border); }
 .tab-trigger { color: var(--dw-muted); }.tab-trigger[data-state="active"] { color: var(--dw-text); border-bottom-color: var(--dw-accent); }
@@ -81,7 +82,7 @@ label, .identity-list, .calibration-list dd, .identity-copy { color: color-mix(i
 .empty-copy, .identity-actions span, .event p, .archive-list time { color: var(--dw-muted); }
 .status-pill { background: var(--dw-surface-raised); color: var(--dw-muted); }.status-pill.awaitingInput, .status-pill.running, .status-pill.ready { color: var(--dw-background); background: var(--dw-success); }.status-pill.failed, .status-pill.cancelled, .status-pill.rejected, .status-pill.expired, .status-pill.error { color: var(--dw-background); background: var(--dw-danger); }
 .cell-card.stale { border-color: color-mix(in srgb, var(--dw-danger) 42%, var(--dw-border)); }.output { color: var(--dw-success); }.timeline-node, .pulse.active, .event.active .event-mark { background: var(--dw-accent); }.pulse.active { box-shadow: 0 0 0 5px color-mix(in srgb, var(--dw-accent) 12%, transparent), 0 0 17px var(--dw-accent); }.event.failed .event-mark { background: var(--dw-danger); }
-.thumb { background: color-mix(in srgb, var(--dw-muted) 55%, var(--dw-border)); }.error-banner, .setup-error { background: color-mix(in srgb, var(--dw-danger) 12%, var(--dw-surface)); border-color: color-mix(in srgb, var(--dw-danger) 45%, var(--dw-border)); }.busy-line { background: linear-gradient(90deg, transparent, var(--dw-accent), transparent); }
+.thumb { background: color-mix(in srgb, var(--dw-muted) 55%, var(--dw-border)); }.error-banner, .setup-error { background: var(--dw-danger); border-color: var(--dw-danger); }.busy-line { background: linear-gradient(90deg, transparent, var(--dw-accent), transparent); }
 .dialog-overlay { background: color-mix(in srgb, var(--dw-background) 72%, transparent); }.dialog-content { border-color: var(--dw-border); background: var(--dw-surface-raised); box-shadow: 0 30px 90px color-mix(in srgb, var(--dw-background) 70%, transparent); }.dialog-content p { color: var(--dw-muted); }
 @keyframes scan { from { transform: translateX(-70%); } to { transform: translateX(70%); } }
 @media (max-width: 560px) { .provider-api-grid { grid-template-columns: 1fr; } }
