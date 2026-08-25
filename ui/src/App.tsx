@@ -194,7 +194,7 @@ export function App() {
   useEffect(() => {
     if (!initialized || !deck) return;
     const unsubscribe = subscribe(
-      deck.eventCursor,
+      0,
       (event) => {
         setEvents((current) => appendHostEvent(current, event));
         if (eventChangesSnapshot(event)) scheduleEventRefresh();
@@ -995,7 +995,7 @@ function describeActivity(event: HostEvent): { title: string; detail: string; to
     case "host.request.failed":
       return { title: "Request failed", detail: joinDetail(payloadString(event, "name"), payloadString(event, "message")), tone: "failed" };
     case "recovery.completed":
-      return { title: "Recovered durable state", detail: wraith || "Startup reconciliation completed" };
+      return { title: "Recovered durable state", detail: describeRecovery(event, wraith) };
     case "model.requested":
       return { title: "Contacting model", detail: subject || "Waiting for the provider", tone: "active" };
     case "model.started":
@@ -1038,8 +1038,15 @@ function visibleActivity(events: HostEvent[]) {
     ...activeLifecycleStarts(events, MODEL_START_EVENTS, MODEL_TERMINAL_EVENTS, modelLifecycleKey),
     ...activeLifecycleStarts(events, KERNEL_START_EVENTS, KERNEL_TERMINAL_EVENTS, kernelLifecycleKey),
   ].map((event) => event.cursor));
-  return events.filter((event) => ACTIVITY_EVENTS.has(event.name) &&
+  return events.filter((event) => !isExpectedOnboardingProbe(event) &&
+    ACTIVITY_EVENTS.has(event.name) &&
     (!LIFECYCLE_START_EVENTS.has(event.name) || activeStartCursors.has(event.cursor)));
+}
+
+function isExpectedOnboardingProbe(event: HostEvent) {
+  return event.name === "host.request.failed" &&
+    payloadString(event, "name") === "deck.snapshot" &&
+    payloadString(event, "code") === "state-conflict";
 }
 
 function activeLifecycleStarts(
@@ -1082,6 +1089,25 @@ function payloadString(event: HostEvent, key: string) {
 function payloadNumber(event: HostEvent, key: string) {
   const value = event.payload[key];
   return typeof value === "number" ? value.toLocaleString() : "0";
+}
+
+function describeRecovery(event: HostEvent, wraith: string) {
+  const incident = event.payload.incident;
+  if (!incident || typeof incident !== "object" || Array.isArray(incident)) {
+    return wraith || "Startup reconciliation completed";
+  }
+  const detail = incident as Record<string, unknown>;
+  const unknown = Array.isArray(detail.outcomeUnknownOperationIds)
+    ? detail.outcomeUnknownOperationIds.length
+    : 0;
+  const runs = Array.isArray(detail.recoveredRunIds) ? detail.recoveredRunIds.length : 0;
+  if (unknown > 0) {
+    return joinDetail(wraith, `${unknown} interrupted operation${unknown === 1 ? "" : "s"} marked outcome unknown`);
+  }
+  if (runs > 0) {
+    return joinDetail(wraith, `${runs} run${runs === 1 ? "" : "s"} resumed on a cold shell`);
+  }
+  return joinDetail(wraith, "Durable context rebuilt from archive");
 }
 
 function joinDetail(...values: string[]) {
@@ -1342,6 +1368,8 @@ function ProviderDialog({ providers, busy, onRefresh, onSignIn, onImport, onDisc
   const managed = providers.filter((item) => managedIds.has(item.providerId));
   const readyCount = managed.filter((item) =>
     item.authentication?.state === "ready" || item.authentication?.state === "expiring").length;
+  const accessChecked = managed.length === managedIds.size &&
+    managed.every((item) => item.authentication !== null);
   useEffect(() => {
     if (!open) setLocalError("");
   }, [open]);
@@ -1360,7 +1388,7 @@ function ProviderDialog({ providers, busy, onRefresh, onSignIn, onImport, onDisc
       <button className="quiet provider-settings-button">
         <span>Provider access</span>
         <small className={clsx("provider-state", readyCount === managedIds.size && "ready")}>
-          {readyCount}/{managedIds.size} ready
+          {accessChecked ? `${readyCount}/${managedIds.size} ready` : "Check access"}
         </small>
       </button>
     </Dialog.Trigger>
@@ -1498,7 +1526,12 @@ function PanelHeading({ eyebrow, title, detail }: { eyebrow: string; title: stri
 }
 
 function Metric({ label, value }: { label: string; value: string }) { return <div className="metric"><span>{label}</span><b>{value}</b></div>; }
-function StatusPill({ value }: { value: string }) { return <span className={clsx("status-pill", value)}>{value}</span>; }
+function StatusPill({ value }: { value: string }) {
+  const label = value
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .replace(/[-_]+/g, " ");
+  return <span className={clsx("status-pill", value)}>{label}</span>;
+}
 function providerStateLabel(value: string) {
   return ({
     missing: "Not connected",

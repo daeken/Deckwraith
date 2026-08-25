@@ -354,7 +354,7 @@ export function subscribe(
           const status = await fetch("/api/v1/status").then((result) => result.json()) as {
             eventCursor: number;
           };
-          cursor = Math.max(cursor, status.eventCursor);
+          if (status.eventCursor < cursor) cursor = 0;
         } finally {
           connect();
         }
