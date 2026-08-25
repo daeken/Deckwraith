@@ -180,7 +180,8 @@ public sealed class DeckwraithHost : IDisposable
             _archive,
             new ContentAddressedArtifactStore(_rootPath),
             _checkpoints,
-            _clock);
+            _clock,
+            _inferenceState);
         _runspaces = new PowerShellRuntimeManager(
             _rootPath,
             durableState,

@@ -107,7 +107,7 @@ public sealed class HostBridgeEndToEndTests
     }
 
     [Fact]
-    public async Task StartupRecoveryEventsDescribeTheRebuiltContext()
+    public async Task WraithCreationCommitsFreshContextBeforeStartupRecovery()
     {
         var rootPath = Path.Combine(
             Path.GetTempPath(), $"deckwraith-host-recovery-{Guid.NewGuid():N}");
@@ -118,11 +118,23 @@ public sealed class HostBridgeEndToEndTests
             {
                 AssertSuccess(await first.ExecuteAsync(Command(
                     "deck.initialize", new { }, "initialize-for-recovery")));
+                AssertSuccess(await first.ExecuteAsync(Command(
+                    "wraith.create", new { name = "guest" }, "create-guest-for-recovery")));
             }
 
+            using (var validated = await DeckwraithHost.OpenAsync(rootPath))
+            {
+                Assert.Equal(0, validated.LatestEventCursor);
+            }
+
+            var contextPath = Path.Combine(rootPath, "agents", "guest", "context.json");
+            Assert.True(File.Exists(contextPath));
+            File.Delete(contextPath);
+
             using var recovered = await DeckwraithHost.OpenAsync(rootPath);
-            var events = await ReadEventsThroughAsync(recovered, recovered.LatestEventCursor);
-            var recovery = Assert.Single(events, item => item.Name == "recovery.completed");
+            var recovery = Assert.Single(
+                await ReadEventsThroughAsync(recovered, recovered.LatestEventCursor),
+                item => item.Name == "recovery.completed");
 
             Assert.Equal(0, recovery.Payload.GetProperty("contextRevision").GetInt32());
             Assert.Equal(0, recovery.Payload.GetProperty("contextTurn").GetInt32());

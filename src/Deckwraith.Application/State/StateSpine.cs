@@ -22,6 +22,7 @@ public sealed class StateSpine : IDisposable
     private readonly IArtifactStore _artifacts;
     private readonly ICheckpointStore _checkpoints;
     private readonly IDeckClock _clock;
+    private readonly IInferenceStateStore? _inferenceState;
     private readonly SemaphoreSlim _gate = new(1, 1);
 
     public StateSpine(
@@ -29,13 +30,15 @@ public sealed class StateSpine : IDisposable
         IAgentArchive archive,
         IArtifactStore artifacts,
         ICheckpointStore checkpoints,
-        IDeckClock? clock = null)
+        IDeckClock? clock = null,
+        IInferenceStateStore? inferenceState = null)
     {
         _state = state;
         _archive = archive;
         _artifacts = artifacts;
         _checkpoints = checkpoints;
         _clock = clock ?? SystemDeckClock.Instance;
+        _inferenceState = inferenceState;
     }
 
     public async Task<string> InitializeAsync(CancellationToken cancellationToken = default)
@@ -69,8 +72,10 @@ public sealed class StateSpine : IDisposable
                 requestedWraith, cancellationToken).ConfigureAwait(false);
             if (setupWraith is null)
             {
-                await _state.CreateWraithAsync(
+                var identity = await _state.CreateWraithAsync(
                     requestedWraith, _clock.UtcNow, cancellationToken).ConfigureAwait(false);
+                await EnsureFreshContextAsync(
+                    requestedWraith, identity, cancellationToken).ConfigureAwait(false);
                 setupWraith = requestedWraith;
             }
 
@@ -137,6 +142,8 @@ public sealed class StateSpine : IDisposable
             await RecoverIfNeededAsync(cancellationToken).ConfigureAwait(false);
             var identity = await _state.CreateWraithAsync(
                 canonical, _clock.UtcNow, cancellationToken).ConfigureAwait(false);
+            await EnsureFreshContextAsync(
+                canonical, identity, cancellationToken).ConfigureAwait(false);
             await _archive.AppendAsync(
                 Event(canonical, "wraith.created", new { name = canonical.Value }),
                 cancellationToken).ConfigureAwait(false);
@@ -144,6 +151,17 @@ public sealed class StateSpine : IDisposable
                 "wraith-created", canonical, null, cancellationToken).ConfigureAwait(false);
             return new StateMutation<IdentityDocument>(identity, commit);
         }, cancellationToken);
+
+    private Task EnsureFreshContextAsync(
+        CanonicalName wraith,
+        IdentityDocument identity,
+        CancellationToken cancellationToken) =>
+        _inferenceState?.EnsureContextAsync(
+            wraith,
+            CanonicalJson.Hash(identity),
+            toolElisionTurns: 8,
+            now: DateTimeOffset.UnixEpoch,
+            cancellationToken: cancellationToken) ?? Task.CompletedTask;
 
     public Task<StateMutation<HauntDocument>> CreateHauntAsync(
         string name,
