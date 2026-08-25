@@ -92,6 +92,30 @@ describe("activity presentation", () => {
     });
   });
 
+  it("collapses a model error and its matching command failure into one activity", () => {
+    const modelError = hostEvent(20, "model.error", {
+      code: "credential-rejected",
+      message: "Reconnect the account.",
+    });
+    const requestFailure = hostEvent(28, "host.request.failed", {
+      kind: "command",
+      name: "run.turn",
+      code: "credential-rejected",
+      message: "Reconnect the account.",
+    });
+    const unrelatedFailure = hostEvent(29, "host.request.failed", {
+      kind: "command",
+      name: "deckbook.run-cell",
+      code: "kernel-error",
+      message: "Cell failed.",
+    });
+
+    expect(visibleActivity([modelError, requestFailure, unrelatedFailure])).toEqual([
+      modelError,
+      unrelatedFailure,
+    ]);
+  });
+
   it("explains cold-start recovery instead of exposing its raw payload", () => {
     const recovery = hostEvent(9, "recovery.completed", {
       wraith: "steward",

@@ -1043,6 +1043,7 @@ export function visibleActivity(events: HostEvent[]) {
   ].map((event) => event.cursor));
   return events.filter((event) => !isExpectedOnboardingProbe(event) &&
     !isEmptyProjectionRecovery(event) &&
+    !isDuplicateModelFailure(event, events) &&
     ACTIVITY_EVENTS.has(event.name) &&
     (!LIFECYCLE_START_EVENTS.has(event.name) || activeStartCursors.has(event.cursor)));
 }
@@ -1066,6 +1067,19 @@ function isEmptyProjectionRecovery(event: HostEvent) {
 
 function emptyArray(value: unknown) {
   return Array.isArray(value) && value.length === 0;
+}
+
+function isDuplicateModelFailure(event: HostEvent, events: HostEvent[]) {
+  if (event.name !== "host.request.failed" || payloadString(event, "name") !== "run.turn") {
+    return false;
+  }
+  const code = payloadString(event, "code");
+  const message = payloadString(event, "message");
+  return events.some((candidate) => candidate.name === "model.error" &&
+    candidate.cursor < event.cursor &&
+    candidate.cursor >= event.cursor - 20 &&
+    payloadString(candidate, "code") === code &&
+    payloadString(candidate, "message") === message);
 }
 
 function activeLifecycleStarts(
