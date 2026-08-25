@@ -79,7 +79,7 @@ export function App() {
     setSelectedHaunt(name);
   }, []);
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (dismissError = false) => {
     try {
       const nextDeck = await query<DeckSnapshot>("deck.snapshot");
       setInitialized(true);
@@ -128,7 +128,7 @@ export function App() {
         setDeckbook(null);
         setCheckpoints([]);
       }
-      setError("");
+      if (dismissError) setError("");
     } catch (reason) {
       if (reason instanceof BridgeError && reason.code === "state-conflict") {
         setInitialized(false);
@@ -183,7 +183,7 @@ export function App() {
       setDeckPathDraft(status.deckPath);
       setTheme(status.theme);
       setThemeTokens(status.themeTokens);
-      return refresh();
+      return refresh(true);
     }).catch((reason: unknown) => {
       setError(messageOf(reason));
     });
@@ -209,7 +209,7 @@ export function App() {
   }, [initialized, refresh, scheduleEventRefresh]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
-    if (initialized) void refresh();
+    if (initialized) void refresh(true);
   }, [selectedWraith, selectedHaunt]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const mutate = useCallback(async (action: AsyncAction) => {
