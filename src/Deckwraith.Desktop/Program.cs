@@ -11,6 +11,7 @@ using Microsoft.AspNetCore.StaticFiles;
 using Microsoft.Extensions.FileProviders;
 
 var deckPath = DesktopDeckPreferences.ResolveDeckPath(args);
+var persistSelectedDeckPath = DesktopDeckPreferences.ShouldPersistDeckSelection(args);
 var builder = WebApplication.CreateBuilder(args);
 builder.WebHost.UseElectron(args);
 builder.WebHost.ConfigureKestrel(options => options.Limits.MaxRequestBodySize = 4 * 1024 * 1024);
@@ -319,8 +320,11 @@ app.MapPost("/api/v1/deck/select", async (
     {
         var selected = await session.SelectAsync(request.Path, cancellationToken)
             .ConfigureAwait(false);
-        await DesktopDeckPreferences.SaveDeckPathAsync(
-            selected.DeckPath, cancellationToken).ConfigureAwait(false);
+        if (persistSelectedDeckPath)
+        {
+            await DesktopDeckPreferences.SaveDeckPathAsync(
+                selected.DeckPath, cancellationToken).ConfigureAwait(false);
+        }
         return Results.Json(selected, ProtocolJson.Options);
     }
     catch (DesktopDeckException exception)
@@ -747,18 +751,10 @@ internal static class DesktopDeckPreferences
 
     public static string ResolveDeckPath(string[] arguments)
     {
-        var index = Array.FindIndex(
-            arguments, argument => StringComparer.Ordinal.Equals(argument, "--deck-path"));
-        if (index >= 0 && index + 1 < arguments.Length &&
-            !string.IsNullOrWhiteSpace(arguments[index + 1]))
+        var overridden = ResolveDeckPathOverride(arguments);
+        if (overridden is not null)
         {
-            return NormalizePath(arguments[index + 1]);
-        }
-
-        var configured = Environment.GetEnvironmentVariable(DeckPathEnvironmentVariable);
-        if (!string.IsNullOrWhiteSpace(configured))
-        {
-            return NormalizePath(configured);
+            return overridden;
         }
 
         var preference = ReadPreferences()?.DeckPath;
@@ -779,6 +775,28 @@ internal static class DesktopDeckPreferences
         return Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
             ".deckwraith");
+    }
+
+    public static bool ShouldPersistDeckSelection(string[] arguments) =>
+        ResolveDeckPathOverride(arguments) is null;
+
+    private static string? ResolveDeckPathOverride(string[] arguments)
+    {
+        var index = Array.FindIndex(
+            arguments, argument => StringComparer.Ordinal.Equals(argument, "--deck-path"));
+        if (index >= 0 && index + 1 < arguments.Length &&
+            !string.IsNullOrWhiteSpace(arguments[index + 1]))
+        {
+            return NormalizePath(arguments[index + 1]);
+        }
+
+        var configured = Environment.GetEnvironmentVariable(DeckPathEnvironmentVariable);
+        if (!string.IsNullOrWhiteSpace(configured))
+        {
+            return NormalizePath(configured);
+        }
+
+        return null;
     }
 
     public static string NormalizePath(string path)

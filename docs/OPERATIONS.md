@@ -17,6 +17,8 @@ The .NET desktop host resolves its deck path in this order:
 Electron.NET launcher does not forward outer application arguments to its .NET child, so packaged
 macOS builds currently use `DECKWRAITH_DECK_PATH` for an invocation-specific override. Environment
 variables are inherited by the child and still take precedence over the saved desktop selection.
+Initializing or switching decks during an overridden invocation does not rewrite the saved desktop
+selection; without an override, an accepted deck folder remains the next-launch default.
 
 Before initializing a new deck, the desktop shows the resolved folder, allows direct path entry or
 a native folder chooser, and can open an existing deck instead. The active absolute path remains
