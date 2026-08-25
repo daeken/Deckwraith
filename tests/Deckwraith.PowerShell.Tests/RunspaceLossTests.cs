@@ -9,6 +9,7 @@ using Deckwraith.Persistence.Artifacts;
 using Deckwraith.Persistence.Git;
 using Deckwraith.Persistence.State;
 using Deckwraith.PowerShell.Hosting;
+using Deckwraith.PowerShell.Serialization;
 
 namespace Deckwraith.PowerShell.Tests;
 
@@ -98,6 +99,16 @@ public sealed class RunspaceLossTests
         Assert.Equal("Cmdlet", Property<string>(firstSummary, "CommandType"));
         Assert.Equal("FullLanguage", Property<string>(firstSummary, "LanguageMode"));
         Assert.Equal(1, first.Runtime.Epoch);
+
+        var runtimeOutput = await manager.ExecuteAsync(invocation, "Get-DwRuntime");
+        Assert.Empty(runtimeOutput.Errors);
+        var portableRuntime = PortablePowerShellValue.ToJsonElement(
+            Assert.Single(runtimeOutput.Output));
+        var assignedTool = Assert.Single(
+            portableRuntime.GetProperty("tools").EnumerateArray());
+        Assert.Equal(
+            "wraith-echo.ps1",
+            Path.GetFileName(assignedTool.GetProperty("sourcePath").GetString()));
 
         var replacement = await manager.ReplaceAsync(
             invocation, "acceptance-test-loss", CancellationToken.None);
