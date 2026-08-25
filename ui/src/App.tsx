@@ -200,6 +200,7 @@ export function App() {
         if (eventChangesSnapshot(event)) scheduleEventRefresh();
       },
       refresh,
+      (reason) => setError(messageOf(reason)),
     );
     return () => {
       unsubscribe();

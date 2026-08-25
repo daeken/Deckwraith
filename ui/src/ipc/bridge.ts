@@ -321,44 +321,60 @@ export function subscribe(
   initialCursor: number,
   onEvent: (event: HostEvent) => void,
   onSnapshotRequired: () => Promise<void>,
+  onError: (reason: unknown) => void = () => undefined,
 ): () => void {
   let cursor = initialCursor;
   let source: EventSource | null = null;
   let stopped = false;
   let reconnectTimer = 0;
 
+  const scheduleReconnect = () => {
+    if (stopped) return;
+    source?.close();
+    source = null;
+    window.clearTimeout(reconnectTimer);
+    reconnectTimer = window.setTimeout(async () => {
+      try {
+        await onSnapshotRequired();
+        const status = await assertProtocolCompatible();
+        if (status.eventCursor < cursor) cursor = 0;
+      } catch (reason) {
+        onError(reason);
+      } finally {
+        connect();
+      }
+    }, 700);
+  };
+
   const connect = () => {
     if (stopped) return;
-    source = new EventSource(`/api/v1/events?after=${cursor}`);
-    source.addEventListener("host", (raw) => {
-      const event = JSON.parse((raw as MessageEvent).data) as HostEvent;
-      if (event.protocolVersion !== HOST_PROTOCOL_VERSION) {
-        source?.close();
-        source = null;
-        stopped = true;
-        throw new BridgeError(
-          "unsupported-protocol",
-          `Host event protocol ${event.protocolVersion} does not match renderer protocol ${HOST_PROTOCOL_VERSION}.`,
-        );
-      }
-      cursor = event.cursor;
-      onEvent(event);
-    });
-    source.onerror = () => {
-      source?.close();
-      source = null;
-      window.clearTimeout(reconnectTimer);
-      reconnectTimer = window.setTimeout(async () => {
-        try {
-          await onSnapshotRequired();
-          const status = await fetch("/api/v1/status").then((result) => result.json()) as {
-            eventCursor: number;
-          };
-          if (status.eventCursor < cursor) cursor = 0;
-        } finally {
-          connect();
+    const connectedSource = new EventSource(`/api/v1/events?after=${cursor}`);
+    source = connectedSource;
+    connectedSource.addEventListener("host", (raw) => {
+      if (source !== connectedSource) return;
+      try {
+        const event = JSON.parse((raw as MessageEvent).data) as HostEvent;
+        if (event.protocolVersion !== HOST_PROTOCOL_VERSION) {
+          throw new BridgeError(
+            "unsupported-protocol",
+            `Host event protocol ${event.protocolVersion} does not match renderer protocol ${HOST_PROTOCOL_VERSION}.`,
+          );
         }
-      }, 700);
+        cursor = event.cursor;
+        onEvent(event);
+      } catch (reason) {
+        connectedSource.close();
+        source = null;
+        onError(reason);
+        if (reason instanceof BridgeError && reason.code === "unsupported-protocol") {
+          stopped = true;
+        } else {
+          scheduleReconnect();
+        }
+      }
+    });
+    connectedSource.onerror = () => {
+      if (source === connectedSource) scheduleReconnect();
     };
   };
 
