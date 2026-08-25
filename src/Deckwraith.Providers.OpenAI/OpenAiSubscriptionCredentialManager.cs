@@ -208,13 +208,23 @@ public sealed class OpenAiSubscriptionCredentialManager : IProviderAuthenticatio
         CancellationToken cancellationToken = default)
     {
         StoredCredential? credential;
+        await RefreshGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             credential = await ReadCredentialAsync(cancellationToken).ConfigureAwait(false);
+            if (credential?.ImportSourcePath is not null)
+            {
+                credential = await SynchronizeImportedCredentialAsync(
+                    credential, cancellationToken).ConfigureAwait(false);
+            }
         }
         catch (OpenAiAuthenticationException exception)
         {
             return Status(ProviderAuthenticationState.Error, exception.Message);
+        }
+        finally
+        {
+            RefreshGate.Release();
         }
 
         if (credential is null)
@@ -247,7 +257,9 @@ public sealed class OpenAiSubscriptionCredentialManager : IProviderAuthenticatio
         {
             return Status(
                 ProviderAuthenticationState.Expired,
-                string.IsNullOrWhiteSpace(credential.RefreshToken)
+                credential.ImportSourcePath is not null
+                    ? "The linked Codex access token expired. Refresh the Codex sign-in or connect this account directly."
+                    : string.IsNullOrWhiteSpace(credential.RefreshToken)
                     ? "The ChatGPT session expired. Reconnect the account."
                     : "The ChatGPT access token expired and will refresh before the next request.",
                 credential);
@@ -257,13 +269,17 @@ public sealed class OpenAiSubscriptionCredentialManager : IProviderAuthenticatio
         {
             return Status(
                 ProviderAuthenticationState.Expiring,
-                "The ChatGPT access token is close to expiry and will refresh before use.",
+                credential.ImportSourcePath is not null
+                    ? "The linked Codex access token is close to expiry. Codex must refresh it, or connect this account directly."
+                    : "The ChatGPT access token is close to expiry and will refresh before use.",
                 credential);
         }
 
         return Status(
             ProviderAuthenticationState.Ready,
-            $"ChatGPT subscription credentials are stored in {_credentialStore.StorageKind}.",
+            credential.ImportSourcePath is not null
+                ? "Using the current Codex sign-in. Deckwraith rereads it before use; connect directly for independent access."
+                : $"ChatGPT subscription credentials are stored in {_credentialStore.StorageKind}.",
             credential);
     }
 
@@ -272,61 +288,9 @@ public sealed class OpenAiSubscriptionCredentialManager : IProviderAuthenticatio
         CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(path);
-        try
-        {
-            await using var stream = File.OpenRead(Path.GetFullPath(path));
-            using var document = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken)
-                .ConfigureAwait(false);
-            var root = document.RootElement;
-            if (!root.TryGetProperty("tokens", out var tokens) ||
-                tokens.ValueKind is not JsonValueKind.Object)
-            {
-                throw new OpenAiAuthenticationException(
-                    "credential-invalid",
-                    "The selected Codex authentication file has no ChatGPT token set.",
-                    false);
-            }
-
-            var accessToken = RequiredString(tokens, "access_token");
-            var refreshToken = OptionalString(tokens, "refresh_token");
-            var idToken = OptionalString(tokens, "id_token");
-            var accountId = OptionalString(tokens, "account_id") ??
-                ReadAccountId(accessToken) ??
-                ReadAccountId(idToken) ??
-                throw new OpenAiAuthenticationException(
-                    "credential-invalid",
-                    "The ChatGPT session does not identify an account.",
-                    false);
-            var expiresAt = ReadExpiration(accessToken) ??
-                ReadExpiration(idToken) ??
-                throw new OpenAiAuthenticationException(
-                    "credential-invalid",
-                    "The ChatGPT session has no readable expiry.",
-                    false);
-            var accountLabel = ReadClaim(idToken, "email") ?? ReadClaim(accessToken, "email");
-            await SaveCredentialAsync(
-                new StoredCredential(
-                    accessToken,
-                    refreshToken,
-                    idToken,
-                    accountId,
-                    accountLabel,
-                    expiresAt,
-                    _timeProvider.GetUtcNow()),
-                cancellationToken).ConfigureAwait(false);
-        }
-        catch (OpenAiAuthenticationException)
-        {
-            throw;
-        }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or JsonException)
-        {
-            throw new OpenAiAuthenticationException(
-                "credential-import-failed",
-                "Deckwraith could not import the existing Codex sign-in.",
-                false,
-                exception);
-        }
+        var credential = await ReadImportedCredentialAsync(path, cancellationToken)
+            .ConfigureAwait(false);
+        await SaveCredentialAsync(credential, cancellationToken).ConfigureAwait(false);
 
         return await GetAuthenticationStatusAsync(cancellationToken).ConfigureAwait(false);
     }
@@ -402,6 +366,40 @@ public sealed class OpenAiSubscriptionCredentialManager : IProviderAuthenticatio
                     "credential-missing",
                     "Connect a ChatGPT account before using OpenAI subscription access.",
                     false);
+            if (credential.ImportSourcePath is not null)
+            {
+                var previousAccessToken = credential.AccessToken;
+                credential = await SynchronizeImportedCredentialAsync(
+                    credential, cancellationToken).ConfigureAwait(false);
+                var sourceAdvanced = !StringComparer.Ordinal.Equals(
+                    previousAccessToken, credential.AccessToken);
+                if (forceRefresh && !sourceAdvanced)
+                {
+                    const string message =
+                        "The linked Codex sign-in was rejected. Refresh it in Codex or connect this ChatGPT account directly in Deckwraith.";
+                    _lastRejection = message;
+                    throw new OpenAiAuthenticationException(
+                        "credential-rejected",
+                        message,
+                        false);
+                }
+
+                var importedRefreshAt = credential.ExpiresAt -
+                    TimeSpan.FromSeconds(_options.RefreshLookaheadSeconds);
+                if (importedRefreshAt <= _timeProvider.GetUtcNow())
+                {
+                    throw new OpenAiAuthenticationException(
+                        "credential-expired",
+                        "The linked Codex access token expired. Refresh it in Codex or connect this ChatGPT account directly in Deckwraith.",
+                        false);
+                }
+
+                return new OpenAiSubscriptionSession(
+                    credential.AccessToken,
+                    credential.AccountId,
+                    credential.ExpiresAt);
+            }
+
             var refreshAt = credential.ExpiresAt -
                 TimeSpan.FromSeconds(_options.RefreshLookaheadSeconds);
             if (forceRefresh || refreshAt <= _timeProvider.GetUtcNow())
@@ -558,6 +556,87 @@ public sealed class OpenAiSubscriptionCredentialManager : IProviderAuthenticatio
             throw new OpenAiAuthenticationException(
                 "credential-invalid",
                 "The stored ChatGPT credential is invalid. Disconnect and reconnect the account.",
+                false,
+                exception);
+        }
+    }
+
+    private async ValueTask<StoredCredential> SynchronizeImportedCredentialAsync(
+        StoredCredential current,
+        CancellationToken cancellationToken)
+    {
+        var imported = await ReadImportedCredentialAsync(
+            current.ImportSourcePath!, cancellationToken).ConfigureAwait(false);
+        if (StringComparer.Ordinal.Equals(imported.AccessToken, current.AccessToken) &&
+            StringComparer.Ordinal.Equals(imported.RefreshToken, current.RefreshToken) &&
+            StringComparer.Ordinal.Equals(imported.IdToken, current.IdToken) &&
+            StringComparer.Ordinal.Equals(imported.AccountId, current.AccountId) &&
+            StringComparer.Ordinal.Equals(imported.AccountLabel, current.AccountLabel) &&
+            imported.ExpiresAt == current.ExpiresAt)
+        {
+            return current;
+        }
+
+        await SaveCredentialAsync(imported, cancellationToken).ConfigureAwait(false);
+        return imported;
+    }
+
+    private async ValueTask<StoredCredential> ReadImportedCredentialAsync(
+        string path,
+        CancellationToken cancellationToken)
+    {
+        var sourcePath = Path.GetFullPath(path);
+        try
+        {
+            await using var stream = File.OpenRead(sourcePath);
+            using var document = await JsonDocument.ParseAsync(
+                stream, cancellationToken: cancellationToken).ConfigureAwait(false);
+            var root = document.RootElement;
+            if (!root.TryGetProperty("tokens", out var tokens) ||
+                tokens.ValueKind is not JsonValueKind.Object)
+            {
+                throw new OpenAiAuthenticationException(
+                    "credential-invalid",
+                    "The selected Codex authentication file has no ChatGPT token set.",
+                    false);
+            }
+
+            var accessToken = RequiredString(tokens, "access_token");
+            var refreshToken = OptionalString(tokens, "refresh_token");
+            var idToken = OptionalString(tokens, "id_token");
+            var accountId = OptionalString(tokens, "account_id") ??
+                ReadAccountId(accessToken) ??
+                ReadAccountId(idToken) ??
+                throw new OpenAiAuthenticationException(
+                    "credential-invalid",
+                    "The ChatGPT session does not identify an account.",
+                    false);
+            var expiresAt = ReadExpiration(accessToken) ??
+                ReadExpiration(idToken) ??
+                throw new OpenAiAuthenticationException(
+                    "credential-invalid",
+                    "The ChatGPT session has no readable expiry.",
+                    false);
+            return new StoredCredential(
+                accessToken,
+                refreshToken,
+                idToken,
+                accountId,
+                ReadClaim(idToken, "email") ?? ReadClaim(accessToken, "email"),
+                expiresAt,
+                _timeProvider.GetUtcNow(),
+                sourcePath);
+        }
+        catch (OpenAiAuthenticationException)
+        {
+            throw;
+        }
+        catch (Exception exception) when (
+            exception is IOException or UnauthorizedAccessException or JsonException)
+        {
+            throw new OpenAiAuthenticationException(
+                "credential-import-failed",
+                "Deckwraith could not read the linked Codex sign-in. Refresh it in Codex or connect this ChatGPT account directly in Deckwraith.",
                 false,
                 exception);
         }
@@ -742,7 +821,8 @@ public sealed class OpenAiSubscriptionCredentialManager : IProviderAuthenticatio
         string AccountId,
         string? AccountLabel,
         DateTimeOffset ExpiresAt,
-        DateTimeOffset UpdatedAt);
+        DateTimeOffset UpdatedAt,
+        string? ImportSourcePath = null);
 }
 
 internal sealed class OpenAiSubscriptionSession(

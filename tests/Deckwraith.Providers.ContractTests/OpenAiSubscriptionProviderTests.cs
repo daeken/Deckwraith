@@ -45,7 +45,7 @@ public sealed class OpenAiSubscriptionProviderTests
     }
 
     [Fact]
-    public async Task ExistingCodexSessionImportsWithoutPersistingItInTheDeck()
+    public async Task ExistingCodexSessionImportsAsLinkedCredentialOutsideTheDeck()
     {
         var store = new MemoryCredentialStore();
         var manager = CreateManager(store);
@@ -76,7 +76,93 @@ public sealed class OpenAiSubscriptionProviderTests
             Assert.Equal("sera@example.test", status.AccountLabel);
             Assert.Equal("memory", manager.StorageKind);
             Assert.NotNull(store.Payload);
-            Assert.DoesNotContain(authPath, store.Payload, StringComparison.Ordinal);
+            using var stored = JsonDocument.Parse(store.Payload);
+            Assert.Equal(
+                Path.GetFullPath(authPath),
+                stored.RootElement.GetProperty("importSourcePath").GetString());
+        }
+        finally
+        {
+            File.Delete(authPath);
+        }
+    }
+
+    [Fact]
+    public async Task LinkedCodexSessionFollowsTokenRotationWithoutRefreshingOAuth()
+    {
+        var store = new MemoryCredentialStore();
+        var manager = CreateManager(
+            store,
+            new HttpClient(new RecordingHandler(_ =>
+                throw new InvalidOperationException("Linked credentials must not rotate Codex OAuth tokens."))));
+        var authPath = Path.Combine(Path.GetTempPath(), $"deckwraith-auth-{Guid.NewGuid():N}.json");
+        var firstAccess = Jwt(new
+        {
+            exp = Now.AddHours(1).ToUnixTimeSeconds(),
+            chatgpt_account_id = "account-1",
+            token = "first",
+        });
+        var rotatedAccess = Jwt(new
+        {
+            exp = Now.AddHours(2).ToUnixTimeSeconds(),
+            chatgpt_account_id = "account-1",
+            token = "rotated",
+        });
+        try
+        {
+            await WriteCodexAuthAsync(authPath, firstAccess, "refresh-first");
+            await manager.ImportCodexSessionAsync(authPath);
+            await WriteCodexAuthAsync(authPath, rotatedAccess, "refresh-rotated");
+
+            var session = await manager.GetSessionAsync(false, CancellationToken.None);
+            var status = await manager.GetAuthenticationStatusAsync();
+
+            Assert.Equal(rotatedAccess, session.AccessToken);
+            Assert.Equal(Now.AddHours(2), session.ExpiresAt);
+            Assert.Equal(ProviderAuthenticationState.Ready, status.State);
+            Assert.Contains("current Codex sign-in", status.Message, StringComparison.Ordinal);
+            Assert.Contains("refresh-rotated", store.Payload, StringComparison.Ordinal);
+        }
+        finally
+        {
+            File.Delete(authPath);
+        }
+    }
+
+    [Fact]
+    public async Task RejectedLinkedSessionDoesNotConsumeTheCodexRefreshToken()
+    {
+        var store = new MemoryCredentialStore();
+        var manager = CreateManager(
+            store,
+            new HttpClient(new RecordingHandler(_ =>
+                throw new InvalidOperationException("Linked credentials must not rotate Codex OAuth tokens."))));
+        var authPath = Path.Combine(Path.GetTempPath(), $"deckwraith-auth-{Guid.NewGuid():N}.json");
+        var accessToken = Jwt(new
+        {
+            exp = Now.AddHours(1).ToUnixTimeSeconds(),
+            chatgpt_account_id = "account-1",
+        });
+        var requests = 0;
+        try
+        {
+            await WriteCodexAuthAsync(authPath, accessToken, "refresh-token");
+            await manager.ImportCodexSessionAsync(authPath);
+            var provider = new OpenAiSubscriptionProvider(
+                manager,
+                new OpenAiSubscriptionProviderOptions(new Uri("https://chatgpt.test/")),
+                new HttpClient(new RecordingHandler(_ =>
+                {
+                    requests++;
+                    return new HttpResponseMessage(HttpStatusCode.Unauthorized);
+                })));
+
+            var error = Assert.IsType<ModelProviderError>(Assert.Single(
+                await CollectAsync(provider, CreateRequest())));
+
+            Assert.Equal(1, requests);
+            Assert.Equal("credential-rejected", error.Code);
+            Assert.Contains("linked Codex sign-in", error.Message, StringComparison.Ordinal);
         }
         finally
         {
@@ -459,6 +545,21 @@ public sealed class OpenAiSubscriptionProviderTests
         return Encode(Encoding.UTF8.GetBytes("{\"alg\":\"none\"}")) + "." +
             Encode(JsonSerializer.SerializeToUtf8Bytes(claims)) + ".signature";
     }
+
+    private static Task WriteCodexAuthAsync(
+        string path,
+        string accessToken,
+        string refreshToken) =>
+        File.WriteAllTextAsync(path, JsonSerializer.Serialize(new
+        {
+            auth_mode = "chatgpt",
+            tokens = new
+            {
+                access_token = accessToken,
+                refresh_token = refreshToken,
+                account_id = "account-1",
+            },
+        }));
 
     private static string Base64Url(byte[] value) =>
         Convert.ToBase64String(value)

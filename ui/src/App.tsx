@@ -1410,7 +1410,7 @@ function ProviderDialog({ providers, busy, onRefresh, onSignIn, onImport, onDisc
           {authentication?.accountLabel && <small>Account: {authentication.accountLabel}</small>}
           {authentication?.expiresAt && <small>Access token expires {formatDate(authentication.expiresAt)}</small>}
           <div className="provider-note">
-            Deckwraith opens OpenAI in your browser, receives the private callback on localhost, and keeps the resulting session in the Mac Keychain. Inference does not start Codex or a local proxy.
+            Deckwraith opens OpenAI in your browser, receives the private callback on localhost, and keeps the resulting session in the Mac Keychain. Inference does not start Codex or a local proxy. The Codex fallback follows its current sign-in read-only so the two apps never compete to rotate one refresh token.
           </div>
           <div className="button-cluster">
             <button className="primary" disabled={busy || loading} onClick={() => {
@@ -1418,7 +1418,7 @@ function ProviderDialog({ providers, busy, onRefresh, onSignIn, onImport, onDisc
             }}>{connected ? "Connect a different ChatGPT account" : "Connect with ChatGPT"}</button>
             <button className="quiet" disabled={busy || loading} onClick={() => {
               void onImport().catch((reason: unknown) => setLocalError(messageOf(reason)));
-            }}>Import an existing Codex sign-in</button>
+            }}>Use the current Codex sign-in</button>
             {connected && <button className="danger" disabled={busy || loading} onClick={() => {
               void onDisconnect().catch((reason: unknown) => setLocalError(messageOf(reason)));
             }}>Disconnect</button>}

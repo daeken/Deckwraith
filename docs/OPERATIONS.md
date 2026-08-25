@@ -69,10 +69,13 @@ code directly with OpenAI, and stores the resulting session in its own platform 
 This follows OpenAI's documented browser-return flow and local credential caching; no login secret
 is placed in the deck.
 
-Deckwraith refreshes the session natively before expiry and retries one rejected inference request
-after a forced refresh. **Import an existing Codex sign-in** remains available as an explicit
-fallback during dogfooding; it copies the token set from `~/.codex/auth.json` into Deckwraith's
-credential store without copying the source file or involving Codex in inference.
+Deckwraith refreshes a directly connected session natively before expiry and retries one rejected
+inference request after a forced refresh. **Use the current Codex sign-in** remains available as an
+explicit fallback during dogfooding. It records the source path in Deckwraith's credential store and
+rereads the token set before use, but never refreshes or writes Codex's credential file. This matters
+because OpenAI rotates refresh tokens: copying one would eventually make either Codex or Deckwraith
+invalidate the other. The fallback does not start Codex or involve it in inference, but Codex must
+keep its own sign-in current; use Deckwraith's browser flow for independent long-lived access.
 
 Example:
 
