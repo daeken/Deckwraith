@@ -1042,6 +1042,7 @@ export function visibleActivity(events: HostEvent[]) {
     ...activeLifecycleStarts(events, KERNEL_START_EVENTS, KERNEL_TERMINAL_EVENTS, kernelLifecycleKey),
   ].map((event) => event.cursor));
   return events.filter((event) => !isExpectedOnboardingProbe(event) &&
+    !isEmptyProjectionRecovery(event) &&
     ACTIVITY_EVENTS.has(event.name) &&
     (!LIFECYCLE_START_EVENTS.has(event.name) || activeStartCursors.has(event.cursor)));
 }
@@ -1050,6 +1051,21 @@ function isExpectedOnboardingProbe(event: HostEvent) {
   return event.name === "host.request.failed" &&
     payloadString(event, "name") === "deck.snapshot" &&
     payloadString(event, "code") === "state-conflict";
+}
+
+function isEmptyProjectionRecovery(event: HostEvent) {
+  if (event.name !== "recovery.completed" || event.payload.contextRevision !== 0) return false;
+  const incident = event.payload.incident;
+  if (!incident || typeof incident !== "object" || Array.isArray(incident)) return false;
+  const detail = incident as Record<string, unknown>;
+  return detail.contextRebuilt === true &&
+    emptyArray(detail.outcomeUnknownOperationIds) &&
+    emptyArray(detail.recoveredRunIds) &&
+    emptyArray(detail.atomicWriteResidues);
+}
+
+function emptyArray(value: unknown) {
+  return Array.isArray(value) && value.length === 0;
 }
 
 function activeLifecycleStarts(

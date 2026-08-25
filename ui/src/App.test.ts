@@ -106,6 +106,26 @@ describe("activity presentation", () => {
       detail: "steward · 2 interrupted operations marked outcome unknown",
     });
   });
+
+  it("hides first-start projection setup but keeps meaningful recovery", () => {
+    const empty = hostEvent(10, "recovery.completed", {
+      wraith: "guest01",
+      contextRevision: 0,
+      contextTurn: 0,
+      incident: {
+        contextRebuilt: true,
+        recoveredRunIds: [],
+        outcomeUnknownOperationIds: [],
+        atomicWriteResidues: [],
+      },
+    });
+    const rebuiltConversation = hostEvent(11, "recovery.completed", {
+      ...empty.payload,
+      contextRevision: 4,
+    });
+
+    expect(visibleActivity([empty, rebuiltConversation])).toEqual([rebuiltConversation]);
+  });
 });
 
 describe("conversation presentation", () => {

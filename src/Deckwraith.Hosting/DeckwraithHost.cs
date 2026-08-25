@@ -527,7 +527,13 @@ public sealed class DeckwraithHost : IDisposable
             {
                 _events.Publish(
                     "recovery.completed",
-                    new { wraith = wraith.Name, result.Incident },
+                    new
+                    {
+                        wraith = wraith.Name,
+                        result.Incident,
+                        contextRevision = result.Context.Revision,
+                        contextTurn = result.Context.Turn,
+                    },
                     _clock.UtcNow);
             }
         }

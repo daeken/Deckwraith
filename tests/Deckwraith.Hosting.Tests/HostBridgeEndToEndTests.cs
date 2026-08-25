@@ -107,6 +107,35 @@ public sealed class HostBridgeEndToEndTests
     }
 
     [Fact]
+    public async Task StartupRecoveryEventsDescribeTheRebuiltContext()
+    {
+        var rootPath = Path.Combine(
+            Path.GetTempPath(), $"deckwraith-host-recovery-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(rootPath);
+        try
+        {
+            using (var first = await DeckwraithHost.OpenAsync(rootPath))
+            {
+                AssertSuccess(await first.ExecuteAsync(Command(
+                    "deck.initialize", new { }, "initialize-for-recovery")));
+            }
+
+            using var recovered = await DeckwraithHost.OpenAsync(rootPath);
+            var events = await ReadEventsThroughAsync(recovered, recovered.LatestEventCursor);
+            var recovery = Assert.Single(events, item => item.Name == "recovery.completed");
+
+            Assert.Equal(0, recovery.Payload.GetProperty("contextRevision").GetInt32());
+            Assert.Equal(0, recovery.Payload.GetProperty("contextTurn").GetInt32());
+            Assert.True(recovery.Payload.GetProperty("incident")
+                .GetProperty("contextRebuilt").GetBoolean());
+        }
+        finally
+        {
+            Directory.Delete(rootPath, recursive: true);
+        }
+    }
+
+    [Fact]
     public async Task ConversationAttachmentsBecomeOpaqueDurableArtifacts()
     {
         var temporaryRoot = Path.Combine(
