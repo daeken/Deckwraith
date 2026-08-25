@@ -60,12 +60,24 @@ export function App() {
   const [error, setError] = useState("");
   const [turnWraith, setTurnWraith] = useState("");
   const [turnStopping, setTurnStopping] = useState(false);
+  const selectedWraithRef = useRef("");
+  const selectedHauntRef = useRef("");
   const turnController = useRef<AbortController | null>(null);
   const eventRefreshTimer = useRef(0);
   const activeRun = wraith ? [...wraith.runs].reverse().find((run) => !isTerminalRun(run)) : undefined;
   const conversationHaunt = activeRun?.haunt ?? selectedHaunt;
   const conversationDefaultPath = deck?.haunts.find((item) => item.name === conversationHaunt)
     ?.project?.projectPath ?? deckPath;
+
+  const selectWraith = useCallback((name: string) => {
+    selectedWraithRef.current = name;
+    setSelectedWraith(name);
+  }, []);
+
+  const selectHaunt = useCallback((name: string) => {
+    selectedHauntRef.current = name;
+    setSelectedHaunt(name);
+  }, []);
 
   const refresh = useCallback(async () => {
     try {
@@ -78,14 +90,16 @@ export function App() {
           ?.authentication ?? null,
       })));
       const activeWraiths = nextDeck.wraiths.filter((item) => !item.archivedAt);
-      const nextWraith = selectedWraith && activeWraiths.some((item) => item.name === selectedWraith)
-        ? selectedWraith
+      const preferredWraith = selectedWraithRef.current;
+      const preferredHaunt = selectedHauntRef.current;
+      const nextWraith = preferredWraith && activeWraiths.some((item) => item.name === preferredWraith)
+        ? preferredWraith
         : activeWraiths[0]?.name ?? "";
-      const nextHaunt = selectedHaunt && nextDeck.haunts.some((item) => item.name === selectedHaunt)
-        ? selectedHaunt
+      const nextHaunt = preferredHaunt && nextDeck.haunts.some((item) => item.name === preferredHaunt)
+        ? preferredHaunt
         : nextDeck.haunts[0]?.name ?? "";
-      setSelectedWraith(nextWraith);
-      setSelectedHaunt(nextHaunt);
+      selectWraith(nextWraith);
+      selectHaunt(nextHaunt);
 
       if (nextWraith) {
         const [nextWraithSnapshot, nextArchive, nextCheckpoints] = await Promise.all([
@@ -123,7 +137,7 @@ export function App() {
         setError(messageOf(reason));
       }
     }
-  }, [selectedHaunt, selectedWraith]);
+  }, [selectHaunt, selectWraith]);
 
   const scheduleEventRefresh = useCallback(() => {
     globalThis.clearTimeout(eventRefreshTimer.current);
@@ -272,7 +286,7 @@ export function App() {
             <button
               key={item.name}
               className={clsx("wraith-button", item.name === selectedWraith && "selected")}
-              onClick={() => setSelectedWraith(item.name)}
+              onClick={() => selectWraith(item.name)}
             >
               <span className="status-dot" />
               <span><b>{item.displayLabel ?? item.name}</b><small>{item.name}</small></span>
@@ -285,7 +299,7 @@ export function App() {
           placeholder="vesper"
           onCreate={(name) => mutate(async () => {
             await command("wraith.create", { name });
-            setSelectedWraith(name.toLowerCase());
+            selectWraith(name.toLowerCase());
           })}
         />
         {deck?.wraiths.some((item) => item.archivedAt) && <>
@@ -294,7 +308,7 @@ export function App() {
             {deck.wraiths.filter((item) => item.archivedAt).map((item) => (
               <button key={item.name} className="wraith-button" disabled={busy} onClick={() => void mutate(async () => {
                 await command("wraith.restore", { wraith: item.name });
-                setSelectedWraith(item.name);
+                selectWraith(item.name);
               })}>
                 <span className="status-dot" />
                 <span><b>{item.displayLabel ?? item.name}</b><small>restore identity</small></span>
@@ -304,7 +318,7 @@ export function App() {
         </>}
         <div className="sidebar-spacer" />
         <div className="section-label">Haunt</div>
-        <select value={selectedHaunt} onChange={(event) => setSelectedHaunt(event.target.value)}>
+        <select value={selectedHaunt} onChange={(event) => selectHaunt(event.target.value)}>
           <option value="">No haunt selected</option>
           {deck?.haunts.map((item) => <option key={item.name}>{item.name}</option>)}
         </select>
@@ -314,7 +328,7 @@ export function App() {
           placeholder="compiler-lab"
           onCreate={(name) => mutate(async () => {
             await command("haunt.create", { name });
-            setSelectedHaunt(name.toLowerCase());
+            selectHaunt(name.toLowerCase());
           })}
         />
         {selectedHaunt && <HauntProjectDialog
@@ -490,7 +504,7 @@ export function App() {
                 busy={busy}
                 onArchive={() => mutate(async () => {
                   await command("wraith.archive", { wraith: selectedWraith });
-                  setSelectedWraith("");
+                  selectWraith("");
                 })}
               />
             </Tabs.Content>
