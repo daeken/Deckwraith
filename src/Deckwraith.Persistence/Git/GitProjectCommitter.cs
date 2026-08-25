@@ -29,9 +29,16 @@ public sealed class GitProjectCommitter : IProjectCommitter
         ArgumentNullException.ThrowIfNull(policy);
         ArgumentException.ThrowIfNullOrWhiteSpace(subject);
         ArgumentNullException.ThrowIfNull(targetPaths);
-        if (subject.IndexOfAny(['\r', '\n']) >= 0)
+        if (subject.IndexOfAny(['\r', '\n', '\0']) >= 0)
         {
-            throw new ProjectCommitException("A project commit subject must be one line.");
+            throw new ProjectCommitException(
+                "A project commit subject must be one line and cannot contain null characters.");
+        }
+
+        if (body?.Contains('\0') is true)
+        {
+            throw new ProjectCommitException(
+                "A project commit body cannot contain null characters.");
         }
 
         if (targetPaths.Count == 0)
@@ -393,8 +400,8 @@ public sealed class GitProjectCommitter : IProjectCommitter
         if (author.Mode is not ProjectCommitAuthorMode.Fixed ||
             string.IsNullOrWhiteSpace(author.Name) ||
             string.IsNullOrWhiteSpace(author.Email) ||
-            author.Name.IndexOfAny(['\r', '\n']) >= 0 ||
-            author.Email.IndexOfAny(['\r', '\n']) >= 0)
+            author.Name.IndexOfAny(['\r', '\n', '\0']) >= 0 ||
+            author.Email.IndexOfAny(['\r', '\n', '\0']) >= 0)
         {
             throw new ProjectCommitException("The haunt's project commit author is invalid.");
         }

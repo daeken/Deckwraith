@@ -64,6 +64,14 @@ public sealed class StateSpineEndToEndTests
             projectPath,
             allowedPaths: ["../outside"],
             cancellationToken: CancellationToken.None));
+        await Assert.ThrowsAsync<DeckStateException>(() => spine.ConfigureHauntProjectAsync(
+            "compiler-lab",
+            projectPath,
+            author: new ProjectCommitAuthor(
+                ProjectCommitAuthorMode.Fixed,
+                "invalid\0author",
+                "author@example.test"),
+            cancellationToken: CancellationToken.None));
         Assert.Equal(string.Empty, await RunGitForTestsAsync(
             temporaryDirectory.Path,
             ["status", "--porcelain"],

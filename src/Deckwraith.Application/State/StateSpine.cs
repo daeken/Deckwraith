@@ -469,10 +469,11 @@ public sealed class StateSpine : IDisposable
                 "A fixed project commit author requires both a name and an email address.");
         }
 
-        if (author.Name.IndexOfAny(['\r', '\n']) >= 0 ||
-            author.Email.IndexOfAny(['\r', '\n']) >= 0)
+        if (author.Name.IndexOfAny(['\r', '\n', '\0']) >= 0 ||
+            author.Email.IndexOfAny(['\r', '\n', '\0']) >= 0)
         {
-            throw new DeckStateException("Project commit author fields cannot contain newlines.");
+            throw new DeckStateException(
+                "Project commit author fields cannot contain newlines or null characters.");
         }
 
         return author with { Name = author.Name.Trim(), Email = author.Email.Trim() };

@@ -264,6 +264,57 @@ public sealed class GitProjectCommitterTests
             temporaryDirectory.Path, ["rev-list", "--count", "HEAD"]));
     }
 
+    [Fact]
+    public async Task PreflightRejectsMetadataThatCannotBePassedSafelyToGit()
+    {
+        using var temporaryDirectory = new TemporaryDirectory();
+        await InitializeProjectAsync(temporaryDirectory.Path);
+        var targetPath = Path.Combine(temporaryDirectory.Path, "target.txt");
+        await File.WriteAllTextAsync(targetPath, "original\n");
+        await GitAsync(temporaryDirectory.Path, ["add", "--all"]);
+        await GitAsync(temporaryDirectory.Path, ["commit", "-m", "baseline"]);
+        var committer = new GitProjectCommitter();
+
+        var subject = await Assert.ThrowsAsync<ProjectCommitException>(() => committer.PrepareAsync(
+            Policy(temporaryDirectory.Path, allowDirty: false),
+            CanonicalName.Parse("lumen"),
+            CanonicalName.Parse("compiler-lab"),
+            "invalid\0subject",
+            null,
+            [targetPath],
+            CancellationToken.None));
+        Assert.Contains("subject", subject.Message, StringComparison.OrdinalIgnoreCase);
+
+        var body = await Assert.ThrowsAsync<ProjectCommitException>(() => committer.PrepareAsync(
+            Policy(temporaryDirectory.Path, allowDirty: false),
+            CanonicalName.Parse("lumen"),
+            CanonicalName.Parse("compiler-lab"),
+            "Valid subject",
+            "invalid\0body",
+            [targetPath],
+            CancellationToken.None));
+        Assert.Contains("body", body.Message, StringComparison.OrdinalIgnoreCase);
+
+        var invalidAuthorPolicy = Policy(temporaryDirectory.Path, allowDirty: false) with
+        {
+            Author = new ProjectCommitAuthor(
+                ProjectCommitAuthorMode.Fixed,
+                "invalid\0author",
+                "author@example.test"),
+        };
+        var author = await Assert.ThrowsAsync<ProjectCommitException>(() => committer.PrepareAsync(
+            invalidAuthorPolicy,
+            CanonicalName.Parse("lumen"),
+            CanonicalName.Parse("compiler-lab"),
+            "Valid subject",
+            null,
+            [targetPath],
+            CancellationToken.None));
+        Assert.Contains("author", author.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal("1", await GitAsync(
+            temporaryDirectory.Path, ["rev-list", "--count", "HEAD"]));
+    }
+
     private static HauntProjectPolicy Policy(
         string path,
         bool allowDirty,
