@@ -160,3 +160,45 @@ Accidental exposure of the current loopback bridge is not an acceptable server m
 - Live activity reports meaningful model, kernel, and failure states rather than bridge noise.
 - A locally built macOS app completes onboarding, provider execution, tool execution, scrolling,
   restart/reconnect, and persistence checks before any release candidate is cut.
+
+## Current macOS dogfood evidence
+
+The 2026-08-25 signed arm64 package built from `main` through `1d59aaa` has completed these checks:
+
+- A native OpenAI Responses turn succeeded with the current Codex subscription credential read
+  directly from its auth file. No Codex process or local proxy participated, and the smoke emitted
+  no credential material.
+- A stale Keychain session produced one readable failure, immediately changed access from ready to
+  rejected, stayed rejected across restart, and did not create duplicate request-failure activity.
+- A stress deck with 25 wraiths, 25 haunts, more than 100 checkpoints, and a growing archive kept
+  the sidebar, conversation, identity, archive, checkpoint, provider, appearance, and activity
+  surfaces independently bounded and scrollable.
+- A brand-new overridden deck initialized to one clean setup commit. Repeating startup created no
+  duplicate setup history; inviting another wraith created its empty context in the same commit;
+  restarting created neither phantom checkpoints nor empty recovery activity.
+- Invocation-only deck overrides remain invocation-only even when initializing a new deck. The
+  saved desktop preference remained byte-for-byte unchanged during the isolated acceptance run.
+- Appearance changes previewed immediately, cancellation restored the saved palette, and rejected
+  or missing provider access exposed a direct recovery action in the blocked conversation composer.
+- A packaged PowerShell deckbook configured a clean Git project, atomically created and
+  structurally edited two files, and made exactly one edit-authored project commit attributed to
+  the current wraith. A later two-file batch with a missing anchor changed no file, created no
+  commit, and produced one informative activity card.
+- The full .NET suite is 123/123 green. Renderer tests are 17/17 green; renderer type checking,
+  protocol checking, production build, strict code-sign verification, and the desktop build are
+  also green.
+
+The next product work should proceed in this order:
+
+1. Finish native subscription transports for Anthropic, xAI, and Z.AI, with one deterministic
+   contract suite and one manually gated live smoke per transport. Add provider-specific API-key
+   live smokes where credentials are available.
+2. Close the setup/housekeeping loop: provider connection, deck location, appearance, working
+   preferences, sensitive-state review, and local-build adaptation should become an explicit
+   collaboration with the continuing setup wraith.
+3. Make haunt focus a durable, attributed transition in the wraith's single context, and add an
+   explicit fork flow for genuinely parallel attention rather than implying one context per haunt.
+4. Repeat the successful project-edit acceptance under dirty-tree rejection/allowance, restricted
+   path scopes, fixed commit attribution, process interruption, and restart recovery.
+5. Run migration/corruption, long-stream cancellation, attachment, and local-custom-build upgrade
+   drills before resuming release or notarization work.
