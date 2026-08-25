@@ -864,7 +864,7 @@ public sealed class AtomicFileEditor
                     break;
                 }
 
-                if (native is null && PathComparer.Equals(name, components[index]))
+                if (native is null && NativeNameComparer.Equals(name, components[index]))
                 {
                     native = entry;
                 }
@@ -973,10 +973,15 @@ public sealed class AtomicFileEditor
     private static string Hash(ReadOnlySpan<byte> bytes) =>
         $"sha256:{Convert.ToHexStringLower(SHA256.HashData(bytes))}";
 
-    private static StringComparer PathComparer =>
+    private static StringComparer NativeNameComparer =>
         OperatingSystem.IsWindows() || OperatingSystem.IsMacOS()
         ? StringComparer.OrdinalIgnoreCase
         : StringComparer.Ordinal;
+
+    // ResolveNativePath canonicalizes the casing of existing entries on
+    // case-insensitive volumes. Remaining distinct strings must stay distinct:
+    // macOS and Windows can both host case-sensitive directories.
+    private static StringComparer PathComparer => StringComparer.Ordinal;
 
     private sealed record TextDocument(string Text, bool HasUtf8Bom);
 

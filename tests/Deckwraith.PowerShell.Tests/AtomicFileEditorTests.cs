@@ -224,6 +224,30 @@ public sealed class AtomicFileEditorTests
     }
 
     [Fact]
+    public async Task CaseSensitiveVolumesKeepDifferentlyCasedPathsDistinct()
+    {
+        using var temporaryDirectory = new TemporaryDirectory();
+        var upperPath = Path.Combine(temporaryDirectory.Path, "Twin.txt");
+        var lowerPath = Path.Combine(temporaryDirectory.Path, "twin.txt");
+        await File.WriteAllTextAsync(upperPath, "upper");
+        if (File.Exists(lowerPath))
+        {
+            return;
+        }
+
+        await File.WriteAllTextAsync(lowerPath, "lower");
+        var result = await AtomicFileEditor.ApplyAsync(new AtomicFileEditBatch(
+        [
+            new("Twin.txt", FileEditKind.Append, Text: "-edited"),
+            new("twin.txt", FileEditKind.Append, Text: "-edited"),
+        ], temporaryDirectory.Path));
+
+        Assert.Equal("upper-edited", await File.ReadAllTextAsync(upperPath));
+        Assert.Equal("lower-edited", await File.ReadAllTextAsync(lowerPath));
+        Assert.Equal(2, result.Files.Count);
+    }
+
+    [Fact]
     public async Task MissingAnchorOrEscapingRootLeavesEveryFileUntouched()
     {
         using var temporaryDirectory = new TemporaryDirectory();

@@ -139,6 +139,54 @@ public sealed class GitProjectCommitterTests
     }
 
     [Fact]
+    public async Task CommitsDistinctCaseSensitivePathsTogether()
+    {
+        using var temporaryDirectory = new TemporaryDirectory();
+        await InitializeProjectAsync(temporaryDirectory.Path);
+        var upperPath = Path.Combine(temporaryDirectory.Path, "Twin.txt");
+        var lowerPath = Path.Combine(temporaryDirectory.Path, "twin.txt");
+        await File.WriteAllTextAsync(upperPath, "upper\n");
+        if (File.Exists(lowerPath))
+        {
+            return;
+        }
+
+        await File.WriteAllTextAsync(lowerPath, "lower\n");
+        await GitAsync(temporaryDirectory.Path, ["add", "--all"]);
+        await GitAsync(temporaryDirectory.Path, ["commit", "-m", "baseline"]);
+        var batch = new AtomicFileEditBatch(
+            [
+                new("Twin.txt", FileEditKind.Append, Text: "edited\n"),
+                new("twin.txt", FileEditKind.Append, Text: "edited\n"),
+            ],
+            temporaryDirectory.Path,
+            "Edit both twins");
+        var committer = new GitProjectCommitter();
+        var preparation = await committer.PrepareAsync(
+            Policy(temporaryDirectory.Path, allowDirty: false),
+            CanonicalName.Parse("lumen"),
+            CanonicalName.Parse("compiler-lab"),
+            batch.CommitSubject!,
+            batch.CommitBody,
+            AtomicFileEditor.ResolvePaths(batch),
+            CancellationToken.None);
+
+        var edit = await AtomicFileEditor.ApplyAsync(
+            batch,
+            (files, cancellationToken) => committer.CommitAsync(
+                preparation, files, cancellationToken));
+
+        var commit = Assert.IsType<ProjectCommitReceipt>(edit.Commit);
+        Assert.Equal(["Twin.txt", "twin.txt"], commit.Paths);
+        Assert.Equal("upper\nedited", await GitAsync(
+            temporaryDirectory.Path, ["show", "HEAD:Twin.txt"]));
+        Assert.Equal("lower\nedited", await GitAsync(
+            temporaryDirectory.Path, ["show", "HEAD:twin.txt"]));
+        Assert.Equal(string.Empty, await GitAsync(
+            temporaryDirectory.Path, ["status", "--porcelain=v1"]));
+    }
+
+    [Fact]
     public async Task RefPublicationFailureLeavesTheBranchAndEditBatchUntouched()
     {
         using var temporaryDirectory = new TemporaryDirectory();

@@ -514,10 +514,10 @@ public sealed class GitProjectCommitter : IProjectCommitter
     private static string Hash(ReadOnlySpan<byte> bytes) =>
         $"sha256:{Convert.ToHexStringLower(SHA256.HashData(bytes))}";
 
-    private static StringComparer PathComparer =>
-        OperatingSystem.IsWindows() || OperatingSystem.IsMacOS()
-        ? StringComparer.OrdinalIgnoreCase
-        : StringComparer.Ordinal;
+    // Target paths come from the editor after native casing is resolved. Do not
+    // collapse distinct paths merely because the host OS commonly uses a
+    // case-insensitive volume; APFS and NTFS can both be case-sensitive.
+    private static StringComparer PathComparer => StringComparer.Ordinal;
 
     private static void DeleteFileIfPresent(string path)
     {
