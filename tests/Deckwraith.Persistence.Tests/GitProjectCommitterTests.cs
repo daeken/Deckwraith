@@ -230,6 +230,40 @@ public sealed class GitProjectCommitterTests
             temporaryDirectory.Path, ["rev-list", "--count", "HEAD"]));
     }
 
+    [Fact]
+    public async Task DirtyTreePermissionNeverAbsorbsChangesAlreadyOnAnEditedPath()
+    {
+        using var temporaryDirectory = new TemporaryDirectory();
+        await InitializeProjectAsync(temporaryDirectory.Path);
+        var targetPath = Path.Combine(temporaryDirectory.Path, "target.txt");
+        var unrelatedPath = Path.Combine(temporaryDirectory.Path, "unrelated.txt");
+        await File.WriteAllTextAsync(targetPath, "original\n");
+        await File.WriteAllTextAsync(unrelatedPath, "original\n");
+        await GitAsync(temporaryDirectory.Path, ["add", "--all"]);
+        await GitAsync(temporaryDirectory.Path, ["commit", "-m", "baseline"]);
+        await File.WriteAllTextAsync(targetPath, "human staged\n");
+        await GitAsync(temporaryDirectory.Path, ["add", "--", "target.txt"]);
+        await File.AppendAllTextAsync(targetPath, "human unstaged\n");
+        await File.WriteAllTextAsync(unrelatedPath, "unrelated dirty\n");
+        var committer = new GitProjectCommitter();
+
+        var error = await Assert.ThrowsAsync<ProjectCommitException>(() => committer.PrepareAsync(
+            Policy(temporaryDirectory.Path, allowDirty: true),
+            CanonicalName.Parse("lumen"),
+            CanonicalName.Parse("compiler-lab"),
+            "Do not absorb human work",
+            null,
+            [targetPath],
+            CancellationToken.None));
+
+        Assert.Contains("already has changes", error.Message, StringComparison.Ordinal);
+        Assert.Equal("human staged", await GitAsync(
+            temporaryDirectory.Path, ["show", ":target.txt"]));
+        Assert.Equal("human staged\nhuman unstaged\n", await File.ReadAllTextAsync(targetPath));
+        Assert.Equal("1", await GitAsync(
+            temporaryDirectory.Path, ["rev-list", "--count", "HEAD"]));
+    }
+
     private static HauntProjectPolicy Policy(
         string path,
         bool allowDirty,

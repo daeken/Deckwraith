@@ -106,6 +106,39 @@ public sealed class GitProjectCommitter : IProjectCommitter
             }
         }
 
+        var repositoryRelativePaths = normalizedTargets
+            .Select(target => Path.Combine(
+                projectPrefix,
+                Path.GetRelativePath(projectPath, target)).Replace('\\', '/'))
+            .ToArray();
+        if (repositoryRelativePaths.Any(path =>
+            path == ".." || path.StartsWith("../", StringComparison.Ordinal)))
+        {
+            throw new ProjectCommitException(
+                "An approved edit path is outside the project repository.");
+        }
+
+        var targetStatus = await RunGitAsync(
+            repositoryPath,
+            [
+                "status",
+                "--porcelain=v1",
+                "-z",
+                "--untracked-files=all",
+                "--",
+                .. repositoryRelativePaths,
+            ],
+            cancellationToken,
+            new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["GIT_LITERAL_PATHSPECS"] = "1",
+            }).ConfigureAwait(false);
+        if (targetStatus.Output.Length > 0)
+        {
+            throw new ProjectCommitException(
+                "An edited path already has changes; auto-commit will not absorb pre-existing work on its target paths.");
+        }
+
         if (!policy.AllowDirtyWorkingTree)
         {
             var status = await RunGitAsync(
@@ -120,18 +153,6 @@ public sealed class GitProjectCommitter : IProjectCommitter
         }
 
         var (authorName, authorEmail) = ResolveAuthor(policy.Author, wraith);
-        var repositoryRelativePaths = normalizedTargets
-            .Select(target => Path.Combine(
-                projectPrefix,
-                Path.GetRelativePath(projectPath, target)).Replace('\\', '/'))
-            .ToArray();
-        if (repositoryRelativePaths.Any(path =>
-            path == ".." || path.StartsWith("../", StringComparison.Ordinal)))
-        {
-            throw new ProjectCommitException(
-                "An approved edit path is outside the project repository.");
-        }
-
         return new ProjectCommitPreparation(
             projectPath,
             repositoryPath,

@@ -275,6 +275,58 @@ public sealed class AtomicFileEditorTests
     }
 
     [Fact]
+    public async Task StaleHashesAndAmbiguousAnchorsRejectTheWholeBatch()
+    {
+        using var temporaryDirectory = new TemporaryDirectory();
+        var guardedPath = Path.Combine(temporaryDirectory.Path, "guarded.txt");
+        var neighborPath = Path.Combine(temporaryDirectory.Path, "neighbor.txt");
+        await File.WriteAllTextAsync(guardedPath, "same same");
+        await File.WriteAllTextAsync(neighborPath, "neighbor");
+
+        var stale = await Assert.ThrowsAsync<AtomicFileEditException>(() =>
+            AtomicFileEditor.ApplyAsync(new AtomicFileEditBatch(
+            [
+                new("guarded.txt", FileEditKind.Write, Text: "changed", ExpectedHash: "sha256:stale"),
+                new("neighbor.txt", FileEditKind.Write, Text: "also changed"),
+            ], temporaryDirectory.Path)));
+        Assert.Contains("Expected hash", stale.Message, StringComparison.Ordinal);
+        Assert.Equal("same same", await File.ReadAllTextAsync(guardedPath));
+        Assert.Equal("neighbor", await File.ReadAllTextAsync(neighborPath));
+
+        var ambiguous = await Assert.ThrowsAsync<AtomicFileEditException>(() =>
+            AtomicFileEditor.ApplyAsync(new AtomicFileEditBatch(
+            [
+                new("guarded.txt", FileEditKind.Replace, Match: "same", Replacement: "different"),
+                new("neighbor.txt", FileEditKind.Write, Text: "also changed"),
+            ], temporaryDirectory.Path)));
+        Assert.Contains("found 2", ambiguous.Message, StringComparison.Ordinal);
+        Assert.Equal("same same", await File.ReadAllTextAsync(guardedPath));
+        Assert.Equal("neighbor", await File.ReadAllTextAsync(neighborPath));
+    }
+
+    [Fact]
+    public async Task LaterPublicationFailureRestoresEarlierFiles()
+    {
+        using var temporaryDirectory = new TemporaryDirectory();
+        var publishedFirstPath = Path.Combine(temporaryDirectory.Path, "a-first.txt");
+        var blockedPath = Path.Combine(temporaryDirectory.Path, "z-blocked");
+        Directory.CreateDirectory(blockedPath);
+
+        var error = await Assert.ThrowsAsync<AtomicFileEditException>(() =>
+            AtomicFileEditor.ApplyAsync(new AtomicFileEditBatch(
+            [
+                new("a-first.txt", FileEditKind.Write, Text: "must roll back"),
+                new("z-blocked", FileEditKind.Write, Text: "cannot replace a directory"),
+            ], temporaryDirectory.Path)));
+
+        Assert.Contains("all published files were restored", error.Message, StringComparison.Ordinal);
+        Assert.False(File.Exists(publishedFirstPath));
+        Assert.True(Directory.Exists(blockedPath));
+        Assert.Empty(Directory.EnumerateFiles(
+            temporaryDirectory.Path, ".deckwraith-edit-*", SearchOption.AllDirectories));
+    }
+
+    [Fact]
     public async Task HostedPowerShellExposesStructuredAtomicEditing()
     {
         using var temporaryDirectory = new TemporaryDirectory();
