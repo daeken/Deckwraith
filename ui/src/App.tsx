@@ -58,6 +58,9 @@ export function App() {
   const [providerAccess, setProviderAccess] = useState<ProviderSnapshot[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [turnWraith, setTurnWraith] = useState("");
+  const [turnStopping, setTurnStopping] = useState(false);
+  const turnController = useRef<AbortController | null>(null);
   const eventRefreshTimer = useRef(0);
   const activeRun = wraith ? [...wraith.runs].reverse().find((run) => !isTerminalRun(run)) : undefined;
   const conversationHaunt = activeRun?.haunt ?? selectedHaunt;
@@ -135,6 +138,29 @@ export function App() {
       provider.providerId === authentication.providerId
         ? { ...provider, authentication }
         : provider));
+  }, []);
+
+  const beginModelTurn = useCallback((wraith: string) => {
+    if (turnController.current) return null;
+    const controller = new AbortController();
+    turnController.current = controller;
+    setTurnWraith(wraith);
+    setTurnStopping(false);
+    return controller;
+  }, []);
+
+  const finishModelTurn = useCallback((controller: AbortController) => {
+    if (turnController.current !== controller) return;
+    turnController.current = null;
+    setTurnWraith("");
+    setTurnStopping(false);
+  }, []);
+
+  const stopModelTurn = useCallback(() => {
+    const controller = turnController.current;
+    if (!controller || controller.signal.aborted) return;
+    setTurnStopping(true);
+    controller.abort();
   }, []);
 
   useEffect(() => {
@@ -451,6 +477,11 @@ export function App() {
                 busy={busy}
                 mutate={mutate}
                 onProviderAuthentication={updateProviderAuthentication}
+                turnActive={turnWraith === selectedWraith}
+                turnStopping={turnStopping && turnWraith === selectedWraith}
+                beginTurn={() => beginModelTurn(selectedWraith)}
+                finishTurn={finishModelTurn}
+                stopTurn={stopModelTurn}
               />
             </Tabs.Content>
             <Tabs.Content className="tab-content" value="identity">
@@ -571,7 +602,7 @@ function IdentityList({ values }: { values: string[] }) {
     : <p className="identity-copy empty-copy">None recorded.</p>;
 }
 
-function ConversationPanel({ context, identity, runs, providers, wraith, haunt, defaultPath, busy, mutate, onProviderAuthentication }: {
+function ConversationPanel({ context, identity, runs, providers, wraith, haunt, defaultPath, busy, mutate, onProviderAuthentication, turnActive, turnStopping, beginTurn, finishTurn, stopTurn }: {
   context: WraithSnapshot["context"];
   identity: IdentityDocument;
   runs: RunDocument[];
@@ -582,6 +613,11 @@ function ConversationPanel({ context, identity, runs, providers, wraith, haunt, 
   busy: boolean;
   mutate: (action: AsyncAction) => Promise<void>;
   onProviderAuthentication: (authentication: ProviderAuthenticationStatus) => void;
+  turnActive: boolean;
+  turnStopping: boolean;
+  beginTurn: () => AbortController | null;
+  finishTurn: (controller: AbortController) => void;
+  stopTurn: () => void;
 }) {
   const [message, setMessage] = useState("");
   const [provider, setProvider] = useState("openai-codex-subscription");
@@ -589,9 +625,6 @@ function ConversationPanel({ context, identity, runs, providers, wraith, haunt, 
   const [attachments, setAttachments] = useState<ConversationAttachment[]>([]);
   const [attachmentError, setAttachmentError] = useState("");
   const [picking, setPicking] = useState(false);
-  const [turnActive, setTurnActive] = useState(false);
-  const [turnStopping, setTurnStopping] = useState(false);
-  const turnController = useRef<AbortController | null>(null);
   const conversationViewport = useRef<HTMLDivElement | null>(null);
   const followConversation = useRef(true);
   const active = [...runs].reverse().find((run) => !isTerminalRun(run));
@@ -614,12 +647,9 @@ function ConversationPanel({ context, identity, runs, providers, wraith, haunt, 
   }, [items.length, lastItemId]);
 
   const send = () => {
-    if (turnController.current) return Promise.resolve();
-    const controller = new AbortController();
+    const controller = beginTurn();
+    if (!controller) return Promise.resolve();
     followConversation.current = true;
-    turnController.current = controller;
-    setTurnActive(true);
-    setTurnStopping(false);
     return mutate(async () => {
       const text = conversationMessage(message.trim(), attachments);
       let runId = active?.runId;
@@ -651,9 +681,7 @@ function ConversationPanel({ context, identity, runs, providers, wraith, haunt, 
         setAttachmentError("");
       }
     }).finally(() => {
-      turnController.current = null;
-      setTurnActive(false);
-      setTurnStopping(false);
+      finishTurn(controller);
     });
   };
 
@@ -735,10 +763,7 @@ function ConversationPanel({ context, identity, runs, providers, wraith, haunt, 
           </details>}
         </div>
         <div className="send-cluster"><small>{turnActive ? "The current turn can be stopped safely" : "⌘↵ to send"}</small>{turnActive
-          ? <button className="danger conversation-send" disabled={turnStopping} onClick={() => {
-            setTurnStopping(true);
-            turnController.current?.abort();
-          }}>{turnStopping ? "Stopping…" : "Stop turn"}</button>
+          ? <button className="danger conversation-send" disabled={turnStopping} onClick={stopTurn}>{turnStopping ? "Stopping…" : "Stop turn"}</button>
           : <button className="primary conversation-send" disabled={busy || !sendable} onClick={() => void send()}>{active ? "Send" : "Start conversation"}</button>}</div>
       </div>
       {!active && authentication && <div className={clsx("provider-inline-status", authentication.state)}>
