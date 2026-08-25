@@ -5,13 +5,18 @@ application runtime, providers, kernels, tools, and durable state formats.
 
 ## State repository
 
-The desktop resolves its deck path in this order:
+The .NET desktop host resolves its deck path in this order:
 
 1. `--deck-path /absolute/path`
 2. `DECKWRAITH_DECK_PATH`
 3. The folder selected and saved by the desktop
 4. A previously initialized legacy deck under the platform-local `Deckwraith/deck-state`
 5. `~/.deckwraith`
+
+`--deck-path` is available when launching the .NET host directly during development. The generated
+Electron.NET launcher does not forward outer application arguments to its .NET child, so packaged
+macOS builds currently use `DECKWRAITH_DECK_PATH` for an invocation-specific override. Environment
+variables are inherited by the child and still take precedence over the saved desktop selection.
 
 Before initializing a new deck, the desktop shows the resolved folder, allows direct path entry or
 a native folder chooser, and can open an existing deck instead. The active absolute path remains

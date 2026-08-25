@@ -1,7 +1,7 @@
 # Pre-1.0 product gate
 
 Status: active
-Last updated: 2026-08-24
+Last updated: 2026-08-25
 
 The architecture milestones in [V1-ACCEPTANCE.md](V1-ACCEPTANCE.md) remain useful evidence, but
 they are not the Deckwraith 1.0 product gate. Release and publisher work is paused while the macOS
@@ -138,15 +138,15 @@ Acceptance:
 - Consequential decisions and disagreements have durable attribution. Broad local authority comes
   with accountability, not a presumption of obedience.
 
-## Server/client decision
+## Server/client decision: local-only for 1.0
 
-The current loopback host protocol and headless composition are useful foundations, but Deckwraith
-does not claim remote server/client support for 1.0 yet. Before the 1.0 freeze, explicitly choose
-one of:
+Deckwraith 1.0 is explicitly a local-only product. The current loopback host protocol and headless
+composition remain useful foundations for a future authenticated remote transport, but they are
+not a remotely exposed service and do not imply remote support.
 
-1. keep 1.0 local-only and version the host boundary for future authenticated remote transport; or
-2. include a remote service with authentication, authorization, concurrency ownership, streaming,
-   credential placement, and threat-model acceptance tests.
+The versioned command/query/event boundary stays transport-neutral. Any future remote mode requires
+an explicit design for authentication, authorization, concurrency ownership, streaming, credential
+placement, and threat-model acceptance tests before a non-loopback listener exists.
 
 Accidental exposure of the current loopback bridge is not an acceptable server mode.
 
